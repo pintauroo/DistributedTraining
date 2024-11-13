@@ -96,12 +96,12 @@ class Net(nn.Module):
         return x
 
 # -------------------- Parameter Server Function --------------------
-def parameter_server(rank, size, num_batches, device, logger: Logger, collector: DataCollector):
-    logger.log(f"[Parameter Server] Initializing on device {device}.")
+def parameter_server(rank, size, num_batches, device, logger: Logger, collector: DataCollector, backend: str):
+    logger.log(f"[Parameter Server] Initializing on device {device} with backend {backend}.")
 
     # Initialize process group
     dist.init_process_group(
-        backend='gloo',  # 'gloo' is more compatible with CPU
+        backend=backend,  # Use NCCL if GPU, Gloo if CPU
         init_method='env://',
         world_size=size,
         rank=rank,
@@ -276,12 +276,12 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
     logger.log(f"[Parameter Server] Process group destroyed.")
 
 # ------------------------ Worker Function ------------------------
-def worker(rank, size, num_batches, batch_size, device, logger: Logger, collector: DataCollector):
-    logger.log(f"[Worker {rank}] Initializing on device {device}.")
+def worker(rank, size, num_batches, batch_size, device, logger: Logger, collector: DataCollector, backend: str):
+    logger.log(f"[Worker {rank}] Initializing on device {device} with backend {backend}.")
 
     # Initialize process group
     dist.init_process_group(
-        backend='gloo',  # 'gloo' is more compatible with CPU
+        backend=backend,  # Use NCCL if GPU, Gloo if CPU
         init_method='env://',
         world_size=size,
         rank=rank,
@@ -297,7 +297,7 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
     # Ensure dataset is pre-downloaded to avoid delays
     dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
     sampler = DistributedSampler(dataset, num_replicas=size - 1, rank=rank - 1, shuffle=True)
-    data_loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=True)
+    data_loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=True if device.type == 'cuda' else False)
     data_iter = iter(data_loader)
     logger.log(f"[Worker {rank}] Data loader initialized with batch size {batch_size}.")
 
@@ -549,14 +549,17 @@ def run(rank, size, num_batches, batch_size, device, verbose: bool):
     logger = Logger(verbose=verbose)
     collector = DataCollector(role='PS' if rank == 0 else 'Worker')
 
+    # Determine backend based on device
+    backend = 'nccl' if device.type == 'cuda' else 'gloo'
+
     if rank == 0:
         # Parameter Server can run on CPU or GPU based on the device argument
         logger.log(f"[Run] Parameter server running on device {device}.")
-        parameter_server(rank, size, num_batches, device, logger, collector)
+        parameter_server(rank, size, num_batches, device, logger, collector, backend)
     else:
         # Workers can run on CPU or GPU based on the device argument
         logger.log(f"[Run] Worker {rank} running on device {device}.")
-        worker(rank, size, num_batches, batch_size, device, logger, collector)
+        worker(rank, size, num_batches, batch_size, device, logger, collector, backend)
 
 # ------------------------ Main Execution ------------------------
 if __name__ == "__main__":
