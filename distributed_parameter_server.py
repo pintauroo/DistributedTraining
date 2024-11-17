@@ -226,13 +226,13 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
     for worker_rank in range(1, size):
         logger.log(f"[Parameter Server] Receiving collected data from worker {worker_rank}")
         # First receive the length of the JSON string
-        length_tensor = torch.zeros(1, dtype=torch.int32)
+        length_tensor = torch.zeros(1, dtype=torch.int32, device=device)  # On GPU
         dist.recv(tensor=length_tensor, src=worker_rank)
         data_length = length_tensor.item()
         # Now receive the actual data
-        data_tensor = torch.zeros(data_length, dtype=torch.uint8)
+        data_tensor = torch.zeros(data_length, dtype=torch.uint8, device=device)  # On GPU
         dist.recv(tensor=data_tensor, src=worker_rank)
-        json_str = data_tensor.numpy().tobytes().decode('utf-8')
+        json_str = data_tensor.cpu().numpy().tobytes().decode('utf-8')  # Move to CPU for processing
         worker_data = DataCollector.deserialize(json_str)
         # Add worker rank to each entry
         for entry in worker_data:
@@ -442,8 +442,8 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
     collected_data = collector.serialize()
     data_bytes = collected_data.encode('utf-8')
     data_length = len(data_bytes)
-    data_tensor = torch.ByteTensor(list(data_bytes))
-    length_tensor = torch.tensor([data_length], dtype=torch.int32)
+    data_tensor = torch.ByteTensor(list(data_bytes)).to(device)  # Move to GPU
+    length_tensor = torch.tensor([data_length], dtype=torch.int32).to(device)  # Move to GPU
 
     # Send length first
     dist.send(tensor=length_tensor, dst=0)
