@@ -30,77 +30,92 @@ sudo rm -f /etc/apt/sources.list.d/cuda*.list
 sudo rm -f /etc/apt/sources.list.d/nvidia*.list
 
 # ----------------------------
-# Step 2: Install Essential Tools (wget and curl)
+# Step 2: Install Essential Tools (wget, curl, etc.)
 # ----------------------------
-echo_info "Installing essential tools: wget, curl..."
-# Update package lists to ensure availability
+echo_info "Installing essential tools: wget, curl, net-tools, git, gnupg, lsb-release..."
 sudo apt-get update -y
-
-# Install wget and curl if not already installed
-sudo apt-get install -y wget curl || {
-    echo_error "Failed to install wget and curl. Please check your network connection."
+sudo apt-get install -y wget curl net-tools git gnupg lsb-release || {
+    echo_error "Failed to install essential tools. Please check your network connection."
     exit 1
 }
 
 # ----------------------------
-# Step 3: Install NVIDIA CUDA Keyring and Repository for Ubuntu 22.04
+# Step 3: Install NVIDIA Drivers (if not already installed)
 # ----------------------------
-echo_info "Installing NVIDIA CUDA GPG keyring and adding repository..."
-
-if ! dpkg -l | grep -q cuda-keyring; then
-    # Download the cuda-keyring package
-    CUDA_KEYRING_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
-    
-    echo_info "Downloading cuda-keyring package from $CUDA_KEYRING_URL..."
-    wget -q "$CUDA_KEYRING_URL" -O cuda-keyring.deb || {
-        echo_error "Failed to download cuda-keyring package."
+echo_info "Checking for NVIDIA driver-535 installation..."
+if ! dpkg -l | grep -q nvidia-driver-535; then
+    echo_info "Installing NVIDIA driver version 535..."
+    sudo apt-get install -y nvidia-driver-535 || {
+        echo_error "Failed to install NVIDIA driver-535."
         exit 1
     }
-    
-    # Install the cuda-keyring package
-    echo_info "Installing cuda-keyring package..."
-    sudo dpkg -i cuda-keyring.deb || {
-        echo_error "Failed to install cuda-keyring package."
-        rm -f cuda-keyring.deb
-        exit 1
-    }
-    
-    # Remove the downloaded .deb file
-    rm -f cuda-keyring.deb
-    echo_info "cuda-keyring package installed successfully."
+    echo_info "NVIDIA driver-535 installed successfully."
 else
-    echo_warning "cuda-keyring package is already installed. Skipping."
+    echo_warning "NVIDIA driver-535 is already installed. Skipping."
 fi
 
 # ----------------------------
-# Step 4: Update Package Lists
+# Step 4: Download and Install CUDA Toolkit 11.8 via Runfile Installer
 # ----------------------------
-echo_info "Updating package lists..."
-sudo apt-get update -y
+CUDA_VERSION="11.8.0"
+CUDA_RUNFILE="cuda_${CUDA_VERSION}_520.61.05_linux.run"
+CUDA_INSTALL_DIR="/usr/local/cuda-11.8"
+
+# Check if CUDA Toolkit 11.8 is already installed
+if [ ! -d "$CUDA_INSTALL_DIR" ]; then
+    echo_info "Downloading CUDA Toolkit ${CUDA_VERSION} Runfile Installer..."
+    wget -q https://developer.download.nvidia.com/compute/cuda/${CUDA_VERSION}/local_installers/${CUDA_RUNFILE} -O "/tmp/${CUDA_RUNFILE}" || {
+        echo_error "Failed to download CUDA Toolkit ${CUDA_VERSION} Runfile."
+        exit 1
+    }
+
+    echo_info "Making the CUDA Runfile executable..."
+    chmod +x "/tmp/${CUDA_RUNFILE}"
+
+    echo_info "Installing CUDA Toolkit ${CUDA_VERSION} (without driver)..."
+    sudo sh "/tmp/${CUDA_RUNFILE}" --silent --toolkit --override || {
+        echo_error "Failed to install CUDA Toolkit ${CUDA_VERSION}."
+        rm -f "/tmp/${CUDA_RUNFILE}"
+        exit 1
+    }
+
+    echo_info "CUDA Toolkit ${CUDA_VERSION} installed successfully at ${CUDA_INSTALL_DIR}."
+
+    # Remove the Runfile installer
+    rm -f "/tmp/${CUDA_RUNFILE}"
+else
+    echo_warning "CUDA Toolkit 11.8 is already installed at ${CUDA_INSTALL_DIR}. Skipping installation."
+fi
 
 # ----------------------------
-# Step 5: Install Full List of Essential Tools
+# Step 5: Set Environment Variables for CUDA
 # ----------------------------
-echo_info "Installing essential tools: net-tools, git, gnupg, lsb-release..."
-sudo apt-get install -y net-tools git gnupg lsb-release || {
-    echo_error "Failed to install essential tools."
+echo_info "Setting up environment variables for CUDA..."
+CUDA_PROFILE_LINE='export PATH=/usr/local/cuda-11.8/bin${PATH:+:${PATH}}\nexport LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}'
+
+# Add to .bashrc if not already present
+if ! grep -Fq "/usr/local/cuda-11.8/bin" ~/.bashrc; then
+    echo -e "$CUDA_PROFILE_LINE" >> ~/.bashrc
+    echo_info "Environment variables for CUDA added to ~/.bashrc."
+else
+    echo_warning "Environment variables for CUDA already exist in ~/.bashrc. Skipping."
+fi
+
+# Source the updated .bashrc
+echo_info "Sourcing ~/.bashrc to apply CUDA environment variables..."
+source ~/.bashrc
+
+# Verify CUDA installation
+if ! command -v nvcc >/dev/null 2>&1; then
+    echo_error "nvcc command not found. CUDA installation might have failed."
     exit 1
-}
-
-# ----------------------------
-# Step 6: Display Current Network Configuration
-# ----------------------------
-echo_info "Displaying current network configuration..."
-if command -v ifconfig >/dev/null 2>&1; then
-    ifconfig
 else
-    echo_warning "ifconfig is not installed. Installing net-tools to provide ifconfig..."
-    sudo apt-get install -y net-tools
-    ifconfig
+    echo_info "CUDA installation verified. nvcc version:"
+    nvcc --version
 fi
 
 # ----------------------------
-# Step 7: Install Miniconda
+# Step 6: Install Miniconda (if not already installed)
 # ----------------------------
 MINICONDA_DIR="$HOME/miniconda3"
 MINICONDA_SCRIPT="$HOME/miniconda.sh"
@@ -127,7 +142,7 @@ else
 fi
 
 # ----------------------------
-# Step 8: Initialize Conda
+# Step 7: Initialize Conda
 # ----------------------------
 # Check if Conda is initialized in .bashrc
 if ! grep -Fxq "source $MINICONDA_DIR/etc/profile.d/conda.sh" ~/.bashrc; then
@@ -148,31 +163,36 @@ source "$MINICONDA_DIR/etc/profile.d/conda.sh" || {
 }
 
 # ----------------------------
-# Step 9: Clone the DistributedTraining Repository
+# Step 8: Clone the DistributedTraining Repository
 # ----------------------------
-# REPO_URL="https://github.com/pintauroo/DistributedTraining.git"
+REPO_URL="https://github.com/pintauroo/DistributedTraining.git"
 REPO_DIR="$HOME/DistributedTraining"
 
-# if [ ! -d "$REPO_DIR" ]; then
-#     echo_info "Cloning repository from $REPO_URL..."
-#     git clone "$REPO_URL" "$REPO_DIR" || {
-#         echo_error "Failed to clone repository."
-#         exit 1
-#     }
-#     echo_info "Repository cloned successfully to $REPO_DIR."
-# else
-#     echo_warning "Repository '$REPO_DIR' already exists. Skipping clone."
-# fi
+if [ ! -d "$REPO_DIR" ]; then
+    echo_info "Cloning repository from $REPO_URL..."
+    git clone "$REPO_URL" "$REPO_DIR" || {
+        echo_error "Failed to clone repository."
+        exit 1
+    }
+    echo_info "Repository cloned successfully to $REPO_DIR."
+else
+    echo_warning "Repository '$REPO_DIR' already exists. Pulling latest changes..."
+    cd "$REPO_DIR"
+    git pull || {
+        echo_error "Failed to update repository."
+        exit 1
+    }
+fi
 
 cd "$REPO_DIR"
 
 # ----------------------------
-# Step 10: Create and Activate Conda Environment
+# Step 9: Create and Activate Conda Environment
 # ----------------------------
 ENV_NAME="pytrch"
 ENV_FILE="environment.yml"
 
-if conda env list | grep -q "^$ENV_NAME"; then
+if conda env list | grep -q "^${ENV_NAME} "; then
     echo_warning "Conda environment '$ENV_NAME' already exists. Skipping creation."
 else
     if [ -f "$ENV_FILE" ]; then
@@ -195,58 +215,7 @@ conda activate "$ENV_NAME" || {
 }
 
 # ----------------------------
-# Step 11: Install NVIDIA Driver
-# ----------------------------
-if ! dpkg -l | grep -q nvidia-driver-535; then
-    echo_info "Installing NVIDIA driver version 535..."
-    sudo apt-get install -y nvidia-driver-535 || {
-        echo_error "Failed to install NVIDIA driver-535."
-        exit 1
-    }
-    echo_info "NVIDIA driver-535 installed successfully."
-else
-    echo_warning "NVIDIA driver-535 is already installed. Skipping."
-fi
-
-# ----------------------------
-# Step 12: Install CUDA Toolkit 11.8
-# ----------------------------
-if ! dpkg -l | grep -q cuda-toolkit-11-8; then
-    echo_info "Attempting to install CUDA Toolkit 11.8..."
-
-    # Update package lists to ensure latest information
-    sudo apt-get update -y
-
-    # Verify if the package exists
-    if apt-cache show cuda-toolkit-11-8 > /dev/null 2>&1; then
-        sudo apt-get install -y cuda-toolkit-11-8 || {
-            echo_error "Failed to install CUDA Toolkit 11.8. Attempting alternative installation methods..."
-
-            # Optionally, call an alternative installation function or exit
-            exit 1
-        }
-        echo_info "CUDA Toolkit 11.8 installed successfully."
-    else
-        echo_error "CUDA Toolkit 11.8 package not found in the repositories."
-        echo_info "Attempting to install the meta-package 'cuda' instead..."
-
-        if apt-cache show cuda > /dev/null 2>&1; then
-            sudo apt-get install -y cuda || {
-                echo_error "Failed to install the 'cuda' meta-package."
-                exit 1
-            }
-            echo_info "'cuda' meta-package installed successfully."
-        else
-            echo_error "'cuda' meta-package not found. Please check the repository configuration."
-            exit 1
-        fi
-    fi
-else
-    echo_warning "CUDA Toolkit 11.8 is already installed. Skipping."
-fi
-
-# ----------------------------
-# Step 13: Install NCCL Libraries
+# Step 10: Install NCCL Libraries
 # ----------------------------
 if ! dpkg -l | grep -q libnccl2; then
     echo_info "Installing NCCL libraries..."
@@ -260,19 +229,7 @@ else
 fi
 
 # ----------------------------
-# Step 14: Display Network Configuration After Installations
-# ----------------------------
-echo_info "Displaying network configuration after installations..."
-if command -v ifconfig >/dev/null 2>&1; then
-    ifconfig
-else
-    echo_warning "ifconfig is not installed. Installing net-tools to provide ifconfig..."
-    sudo apt-get install -y net-tools
-    ifconfig
-fi
-
-# ----------------------------
-# Step 15: Install PyTorch with CUDA Support
+# Step 11: Install PyTorch with CUDA Support
 # ----------------------------
 if ! python -c "import torch" &> /dev/null; then
     echo_info "Installing PyTorch, torchvision, and torchaudio with CUDA support..."
@@ -286,7 +243,13 @@ else
 fi
 
 # ----------------------------
-# Step 16: Final Setup and Reboot
+# Step 12: Final Setup and Reboot
 # ----------------------------
-echo_info "Setup complete. Rebooting the system to apply NVIDIA driver and CUDA installation..."
-sudo reboot
+echo_info "Setup complete. It is recommended to reboot the system to apply all changes."
+read -p "Do you want to reboot now? (y/N): " REBOOT_CONFIRM
+if [[ "$REBOOT_CONFIRM" =~ ^[Yy]$ ]]; then
+    echo_info "Rebooting the system..."
+    sudo reboot
+else
+    echo_warning "Reboot skipped. Please remember to reboot the system later to apply all changes."
+fi
