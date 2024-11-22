@@ -17,211 +17,234 @@ echo_warning() {
     echo -e "\e[33m[WARNING]\e[0m $1"
 }
 
-# Function to display error messages
+# Function to display error messages and exit
 echo_error() {
     echo -e "\e[31m[ERROR]\e[0m $1"
+    exit 1
 }
 
 # ----------------------------
-# Step 1: Clean Up Existing NVIDIA CUDA Repositories (if any)
+# Step 1: Clean Up Existing NVIDIA CUDA Repositories
 # ----------------------------
 echo_info "Removing any existing NVIDIA CUDA repository entries to prevent conflicts..."
 sudo rm -f /etc/apt/sources.list.d/cuda*.list
 sudo rm -f /etc/apt/sources.list.d/nvidia*.list
 
 # ----------------------------
-# Step 2: Install Essential Tools (wget, curl, etc.)
+# Step 2: Install Essential Tools
 # ----------------------------
 echo_info "Installing essential tools: wget, curl, net-tools, git, gnupg, lsb-release..."
 sudo apt-get update -y
 sudo apt-get install -y wget curl net-tools git gnupg lsb-release || {
     echo_error "Failed to install essential tools. Please check your network connection."
-    exit 1
 }
 
 # ----------------------------
 # Step 3: Install NVIDIA Drivers (if not already installed)
 # ----------------------------
-echo_info "Checking for NVIDIA driver-535 installation..."
-if ! dpkg -l | grep -q nvidia-driver-535; then
-    echo_info "Installing NVIDIA driver version 535..."
-    sudo apt-get install -y nvidia-driver-535 || {
-        echo_error "Failed to install NVIDIA driver-535."
-        exit 1
+DRIVER_VERSION="535"
+echo_info "Checking for NVIDIA driver-${DRIVER_VERSION} installation..."
+if ! dpkg -l | grep -q "nvidia-driver-${DRIVER_VERSION}"; then
+    echo_info "Installing NVIDIA driver version ${DRIVER_VERSION}..."
+    sudo apt-get install -y "nvidia-driver-${DRIVER_VERSION}" || {
+        echo_error "Failed to install NVIDIA driver-${DRIVER_VERSION}."
     }
-    echo_info "NVIDIA driver-535 installed successfully."
+    echo_info "NVIDIA driver-${DRIVER_VERSION} installed successfully."
 else
-    echo_warning "NVIDIA driver-535 is already installed. Skipping."
+    echo_warning "NVIDIA driver-${DRIVER_VERSION} is already installed. Skipping."
 fi
 
 # ----------------------------
-# Step 4: Download and Install CUDA Toolkit 11.8 via Runfile Installer
+# Step 4: Add NVIDIA CUDA Repository and GPG Key
 # ----------------------------
-CUDA_VERSION="11.8.0"
-CUDA_RUNFILE="cuda_${CUDA_VERSION}_520.61.05_linux.run"
-CUDA_INSTALL_DIR="/usr/local/cuda-11.8"
+echo_info "Adding NVIDIA CUDA repository and GPG key..."
 
-# Check if CUDA Toolkit 11.8 is already installed
-if [ ! -d "$CUDA_INSTALL_DIR" ]; then
-    echo_info "Downloading CUDA Toolkit ${CUDA_VERSION} Runfile Installer..."
-    wget -q https://developer.download.nvidia.com/compute/cuda/${CUDA_VERSION}/local_installers/${CUDA_RUNFILE} -O "/tmp/${CUDA_RUNFILE}" || {
-        echo_error "Failed to download CUDA Toolkit ${CUDA_VERSION} Runfile."
-        exit 1
+# Define CUDA repository details
+CUDA_VERSION="11-8"
+CUDA_REPO_PKG="cuda-repo-ubuntu2204-${CUDA_VERSION}-local_11.8.0-520.61.05-1_amd64.deb"
+CUDA_REPO_URL="https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/${CUDA_REPO_PKG}"
+CUDA_REPO_PATH="/var/cuda-repo-ubuntu2204-${CUDA_VERSION}-local"
+
+# Download the CUDA repository package if not already downloaded
+if [ ! -f "/tmp/${CUDA_REPO_PKG}" ]; then
+    echo_info "Downloading CUDA repository package from ${CUDA_REPO_URL}..."
+    wget -q "${CUDA_REPO_URL}" -O "/tmp/${CUDA_REPO_PKG}" || {
+        echo_error "Failed to download CUDA repository package from ${CUDA_REPO_URL}."
     }
+else
+    echo_warning "CUDA repository package already downloaded. Skipping download."
+fi
 
-    echo_info "Making the CUDA Runfile executable..."
-    chmod +x "/tmp/${CUDA_RUNFILE}"
+# Install the CUDA repository package
+echo_info "Installing CUDA repository package..."
+sudo dpkg -i "/tmp/${CUDA_REPO_PKG}" || {
+    echo_error "Failed to install CUDA repository package."
+}
 
-    echo_info "Installing CUDA Toolkit ${CUDA_VERSION} (without driver)..."
-    sudo sh "/tmp/${CUDA_RUNFILE}" --silent --toolkit --override || {
+# Add the repository GPG key
+echo_info "Adding CUDA GPG key..."
+sudo cp "${CUDA_REPO_PATH}/cuda-*-keyring.gpg" /usr/share/keyrings/ || {
+    echo_error "Failed to copy CUDA GPG key."
+}
+
+# Add the CUDA repository to apt sources
+echo_info "Adding CUDA repository to apt sources..."
+echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] file://${CUDA_REPO_PATH} /" | sudo tee /etc/apt/sources.list.d/cuda.list
+
+# Update the package lists to include the new CUDA repository
+echo_info "Updating package lists..."
+sudo apt-get update -y
+
+# Clean up the downloaded repository package to save space
+echo_info "Removing downloaded CUDA repository package..."
+sudo rm -f "/tmp/${CUDA_REPO_PKG}"
+
+# ----------------------------
+# Step 5: Install CUDA Toolkit 11.8
+# ----------------------------
+echo_info "Installing CUDA Toolkit ${CUDA_VERSION}..."
+if ! dpkg -l | grep -q "cuda-toolkit-${CUDA_VERSION}"; then
+    sudo apt-get install -y "cuda-toolkit-${CUDA_VERSION}" || {
         echo_error "Failed to install CUDA Toolkit ${CUDA_VERSION}."
-        rm -f "/tmp/${CUDA_RUNFILE}"
-        exit 1
     }
-
-    echo_info "CUDA Toolkit ${CUDA_VERSION} installed successfully at ${CUDA_INSTALL_DIR}."
-
-    # Remove the Runfile installer
-    rm -f "/tmp/${CUDA_RUNFILE}"
+    echo_info "CUDA Toolkit ${CUDA_VERSION} installed successfully."
 else
-    echo_warning "CUDA Toolkit 11.8 is already installed at ${CUDA_INSTALL_DIR}. Skipping installation."
+    echo_warning "CUDA Toolkit ${CUDA_VERSION} is already installed. Skipping."
 fi
 
 # ----------------------------
-# Step 5: Set Environment Variables for CUDA
+# Step 6: Set Environment Variables for CUDA
 # ----------------------------
 echo_info "Setting up environment variables for CUDA..."
-CUDA_PROFILE_LINE='export PATH=/usr/local/cuda-11.8/bin${PATH:+:${PATH}}\nexport LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}'
+CUDA_PROFILE_LINES="
+# CUDA Toolkit 11.8
+export PATH=/usr/local/cuda-11.8/bin\${PATH:+:\${PATH}}
+export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}
+"
 
-# Add to .bashrc if not already present
+# Append to ~/.bashrc if not already present
 if ! grep -Fq "/usr/local/cuda-11.8/bin" ~/.bashrc; then
-    echo -e "$CUDA_PROFILE_LINE" >> ~/.bashrc
+    echo -e "${CUDA_PROFILE_LINES}" >> ~/.bashrc
     echo_info "Environment variables for CUDA added to ~/.bashrc."
 else
     echo_warning "Environment variables for CUDA already exist in ~/.bashrc. Skipping."
 fi
 
-# Source the updated .bashrc
+# Source the updated .bashrc to apply changes immediately
 echo_info "Sourcing ~/.bashrc to apply CUDA environment variables..."
 source ~/.bashrc
 
 # Verify CUDA installation
-if ! command -v nvcc >/dev/null 2>&1; then
-    echo_error "nvcc command not found. CUDA installation might have failed."
-    exit 1
-else
+if command -v nvcc >/dev/null 2>&1; then
     echo_info "CUDA installation verified. nvcc version:"
     nvcc --version
+else
+    echo_error "nvcc command not found. CUDA installation might have failed."
 fi
 
 # ----------------------------
-# Step 6: Install Miniconda (if not already installed)
+# Step 7: Install Miniconda (if not already installed)
 # ----------------------------
 MINICONDA_DIR="$HOME/miniconda3"
-MINICONDA_SCRIPT="$HOME/miniconda.sh"
+MINICONDA_SCRIPT="/tmp/miniconda.sh"
 
-if [ ! -d "$MINICONDA_DIR" ]; then
+if [ ! -d "${MINICONDA_DIR}" ]; then
     echo_info "Downloading Miniconda installer..."
-    wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O "$MINICONDA_SCRIPT" || {
+    wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O "${MINICONDA_SCRIPT}" || {
         echo_error "Failed to download Miniconda installer."
-        exit 1
     }
 
     echo_info "Installing Miniconda..."
-    bash "$MINICONDA_SCRIPT" -b -u -p "$MINICONDA_DIR" || {
+    bash "${MINICONDA_SCRIPT}" -b -u -p "${MINICONDA_DIR}" || {
         echo_error "Failed to install Miniconda."
-        rm -f "$MINICONDA_SCRIPT"
-        exit 1
     }
 
     echo_info "Removing Miniconda installer..."
-    rm -f "$MINICONDA_SCRIPT"
-    echo_info "Miniconda installed successfully at $MINICONDA_DIR."
+    rm -f "${MINICONDA_SCRIPT}"
+    echo_info "Miniconda installed successfully at ${MINICONDA_DIR}."
 else
-    echo_warning "Miniconda is already installed at $MINICONDA_DIR. Skipping installation."
+    echo_warning "Miniconda is already installed at ${MINICONDA_DIR}. Skipping installation."
 fi
 
 # ----------------------------
-# Step 7: Initialize Conda
+# Step 8: Initialize Conda
 # ----------------------------
-# Check if Conda is initialized in .bashrc
-if ! grep -Fxq "source $MINICONDA_DIR/etc/profile.d/conda.sh" ~/.bashrc; then
-    echo_info "Initializing Conda..."
-    "$MINICONDA_DIR/bin/conda" init || {
+echo_info "Initializing Conda..."
+# Initialize Conda for bash if not already initialized
+if ! grep -Fq "source ${MINICONDA_DIR}/etc/profile.d/conda.sh" ~/.bashrc; then
+    "${MINICONDA_DIR}/bin/conda" init bash || {
         echo_error "Failed to initialize Conda."
-        exit 1
     }
+    echo_info "Conda initialized in ~/.bashrc."
 else
-    echo_warning "Conda is already initialized in .bashrc. Skipping initialization."
+    echo_warning "Conda is already initialized in ~/.bashrc. Skipping initialization."
 fi
 
 # Source Conda for the current script
 echo_info "Sourcing Conda..."
-source "$MINICONDA_DIR/etc/profile.d/conda.sh" || {
+source "${MINICONDA_DIR}/etc/profile.d/conda.sh" || {
     echo_error "Failed to source Conda."
-    exit 1
 }
 
 # ----------------------------
-# Step 8: Clone the DistributedTraining Repository
+# Step 9: Clone the DistributedTraining Repository
 # ----------------------------
 REPO_URL="https://github.com/pintauroo/DistributedTraining.git"
 REPO_DIR="$HOME/DistributedTraining"
 
-if [ ! -d "$REPO_DIR" ]; then
-    echo_info "Cloning repository from $REPO_URL..."
-    git clone "$REPO_URL" "$REPO_DIR" || {
+if [ ! -d "${REPO_DIR}" ]; then
+    echo_info "Cloning repository from ${REPO_URL}..."
+    git clone "${REPO_URL}" "${REPO_DIR}" || {
         echo_error "Failed to clone repository."
-        exit 1
     }
-    echo_info "Repository cloned successfully to $REPO_DIR."
+    echo_info "Repository cloned successfully to ${REPO_DIR}."
 else
-    echo_warning "Repository '$REPO_DIR' already exists. Pulling latest changes..."
-    cd "$REPO_DIR"
+    echo_warning "Repository '${REPO_DIR}' already exists. Pulling latest changes..."
+    cd "${REPO_DIR}" || {
+        echo_error "Failed to navigate to repository directory."
+    }
     git pull || {
         echo_error "Failed to update repository."
-        exit 1
     }
 fi
 
-cd "$REPO_DIR"
+# Navigate to the repository directory
+cd "${REPO_DIR}" || {
+    echo_error "Failed to navigate to repository directory."
+}
 
 # ----------------------------
-# Step 9: Create and Activate Conda Environment
+# Step 10: Create and Activate Conda Environment
 # ----------------------------
 ENV_NAME="pytrch"
 ENV_FILE="environment.yml"
 
 if conda env list | grep -q "^${ENV_NAME} "; then
-    echo_warning "Conda environment '$ENV_NAME' already exists. Skipping creation."
+    echo_warning "Conda environment '${ENV_NAME}' already exists. Skipping creation."
 else
-    if [ -f "$ENV_FILE" ]; then
-        echo_info "Creating Conda environment '$ENV_NAME' from $ENV_FILE..."
-        conda env create -f "$ENV_FILE" -n "$ENV_NAME" || {
-            echo_error "Failed to create Conda environment '$ENV_NAME'."
-            exit 1
+    if [ -f "${ENV_FILE}" ]; then
+        echo_info "Creating Conda environment '${ENV_NAME}' from ${ENV_FILE}..."
+        conda env create -f "${ENV_FILE}" -n "${ENV_NAME}" || {
+            echo_error "Failed to create Conda environment '${ENV_NAME}'."
         }
-        echo_info "Conda environment '$ENV_NAME' created successfully."
+        echo_info "Conda environment '${ENV_NAME}' created successfully."
     else
-        echo_error "Environment file '$ENV_FILE' not found in repository."
-        exit 1
+        echo_error "Environment file '${ENV_FILE}' not found in repository."
     fi
 fi
 
-echo_info "Activating Conda environment '$ENV_NAME'..."
-conda activate "$ENV_NAME" || {
-    echo_error "Failed to activate Conda environment '$ENV_NAME'."
-    exit 1
+echo_info "Activating Conda environment '${ENV_NAME}'..."
+conda activate "${ENV_NAME}" || {
+    echo_error "Failed to activate Conda environment '${ENV_NAME}'."
 }
 
 # ----------------------------
-# Step 10: Install NCCL Libraries
+# Step 11: Install NCCL Libraries
 # ----------------------------
-if ! dpkg -l | grep -q libnccl2; then
-    echo_info "Installing NCCL libraries..."
+echo_info "Installing NCCL libraries..."
+if ! dpkg -l | grep -q "libnccl2"; then
     sudo apt-get install -y libnccl2 libnccl-dev || {
         echo_error "Failed to install NCCL libraries."
-        exit 1
     }
     echo_info "NCCL libraries installed successfully."
 else
@@ -229,13 +252,15 @@ else
 fi
 
 # ----------------------------
-# Step 11: Install PyTorch with CUDA Support
+# Step 12: Install PyTorch with CUDA Support
 # ----------------------------
+echo_info "Installing PyTorch, torchvision, and torchaudio with CUDA support..."
 if ! python -c "import torch" &> /dev/null; then
-    echo_info "Installing PyTorch, torchvision, and torchaudio with CUDA support..."
+    pip install --upgrade pip || {
+        echo_error "Failed to upgrade pip."
+    }
     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 || {
         echo_error "Failed to install PyTorch with CUDA support."
-        exit 1
     }
     echo_info "PyTorch with CUDA support installed successfully."
 else
@@ -243,7 +268,7 @@ else
 fi
 
 # ----------------------------
-# Step 12: Final Setup and Reboot
+# Step 13: Final Setup and Reboot
 # ----------------------------
 echo_info "Setup complete. It is recommended to reboot the system to apply all changes."
 read -p "Do you want to reboot now? (y/N): " REBOOT_CONFIRM
