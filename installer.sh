@@ -212,12 +212,35 @@ fi
 # Step 12: Install CUDA Toolkit 11.8
 # ----------------------------
 if ! dpkg -l | grep -q cuda-toolkit-11-8; then
-    echo_info "Installing CUDA Toolkit 11.8..."
-    sudo apt-get install -y cuda-toolkit-11-8 || {
-        echo_error "Failed to install CUDA Toolkit 11.8."
-        exit 1
-    }
-    echo_info "CUDA Toolkit 11.8 installed successfully."
+    echo_info "Attempting to install CUDA Toolkit 11.8..."
+
+    # Update package lists to ensure latest information
+    sudo apt-get update -y
+
+    # Verify if the package exists
+    if apt-cache show cuda-toolkit-11-8 > /dev/null 2>&1; then
+        sudo apt-get install -y cuda-toolkit-11-8 || {
+            echo_error "Failed to install CUDA Toolkit 11.8. Attempting alternative installation methods..."
+
+            # Optionally, call an alternative installation function or exit
+            exit 1
+        }
+        echo_info "CUDA Toolkit 11.8 installed successfully."
+    else
+        echo_error "CUDA Toolkit 11.8 package not found in the repositories."
+        echo_info "Attempting to install the meta-package 'cuda' instead..."
+
+        if apt-cache show cuda > /dev/null 2>&1; then
+            sudo apt-get install -y cuda || {
+                echo_error "Failed to install the 'cuda' meta-package."
+                exit 1
+            }
+            echo_info "'cuda' meta-package installed successfully."
+        else
+            echo_error "'cuda' meta-package not found. Please check the repository configuration."
+            exit 1
+        fi
+    fi
 else
     echo_warning "CUDA Toolkit 11.8 is already installed. Skipping."
 fi
