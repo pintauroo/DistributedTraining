@@ -81,11 +81,21 @@ sudo dpkg -i "/tmp/${CUDA_REPO_PKG}" || {
     echo_error "Failed to install CUDA repository package."
 }
 
-# Add the repository GPG key
-echo_info "Adding CUDA GPG key..."
-sudo cp "${CUDA_REPO_PATH}/cuda-*-keyring.gpg" /usr/share/keyrings/ || {
-    echo_error "Failed to copy CUDA GPG key."
-}
+# Check for the presence of the keyring file
+KEYRING_FILE=$(ls ${CUDA_REPO_PATH}/cuda-*-keyring.gpg 2>/dev/null || echo "")
+
+if [ -f "${KEYRING_FILE}" ]; then
+    echo_info "Adding CUDA GPG key..."
+    sudo cp "${KEYRING_FILE}" /usr/share/keyrings/ || {
+        echo_error "Failed to copy CUDA GPG key."
+    }
+else
+    echo_warning "CUDA keyring file not found. Attempting to add the key manually..."
+    # Manually add the NVIDIA GPG key
+    wget -qO- https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | sudo gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg || {
+        echo_error "Failed to download and add the NVIDIA GPG key."
+    }
+fi
 
 # Add the CUDA repository to apt sources
 echo_info "Adding CUDA repository to apt sources..."
