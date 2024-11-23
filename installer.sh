@@ -195,9 +195,9 @@ echo_info "deviceQuery test passed successfully."
 # ----------------------------
 # Step 11: Cleanup
 # ----------------------------
-# echo_info "Cleaning up the CUDA Runfile Installer..."
-# rm -f "/tmp/${CUDA_RUNFILE}"
-# echo_info "Removed the CUDA Runfile Installer."
+echo_info "Cleaning up the CUDA Runfile Installer..."
+rm -f "/tmp/${CUDA_RUNFILE}"
+echo_info "Removed the CUDA Runfile Installer."
 
 # ----------------------------
 # Step 12: Final Reboot Prompt
