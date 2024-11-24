@@ -1,212 +1,278 @@
 #!/bin/bash
 
+# -----------------------------------------------------------------------------
+# Script Name: setup_distributed_training.sh
+# Description: Automates the setup of a distributed PyTorch training environment
+#              with optional NCCL support using Conda on Ubuntu 22.04 with Python 3.10.12.
+# Author: OpenAI ChatGPT
+# Date: 2024-04-27
+# -----------------------------------------------------------------------------
+
 # Exit immediately if a command exits with a non-zero status
 set -e
 
-# ----------------------------
-# Function Definitions
-# ----------------------------
+# ----------------------------- Configuration -----------------------------
 
-# Function to display informational messages
-echo_info() {
-    echo -e "\e[34m[INFO]\e[0m $1"
+# Name of the Conda environment
+ENV_NAME="distributed_training"
+
+# Python version
+PYTHON_VERSION=3.10.12
+
+# CUDA version (Ensure compatibility with your NVIDIA drivers)
+CUDA_VERSION=11.8
+
+# cuDNN version (Set to 8.5.0.32 as per available packages)
+CUDNN_VERSION=8.8.0.121
+
+# Miniconda installer URL
+MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+
+# Installation directory for Miniconda
+MINICONDA_DIR="$HOME/miniconda3"
+
+# Channels
+PYTORCH_CHANNEL="pytorch"
+NVIDIA_CHANNEL="nvidia"
+CONDA_FORGE_CHANNEL="conda-forge"
+
+# ------------------------- Function Definitions -------------------------
+
+# Function to check if a command exists
+command_exists () {
+    command -v "$1" >/dev/null 2>&1 ;
 }
 
-# Function to display warning messages
-echo_warning() {
-    echo -e "\e[33m[WARNING]\e[0m $1"
+# Function to install Miniconda
+install_miniconda() {
+    echo "=== Installing Miniconda ==="
+
+    # Download Miniconda installer
+    echo "Downloading Miniconda installer..."
+    wget -O ~/miniconda.sh ${MINICONDA_URL}
+
+    # Make the installer executable
+    chmod +x ~/miniconda.sh
+
+    # Run the installer silently
+    echo "Running Miniconda installer..."
+    bash ~/miniconda.sh -b -p ${MINICONDA_DIR}
+
+    # Remove the installer
+    rm ~/miniconda.sh
+
+    # Initialize Conda
+    echo "Initializing Conda..."
+    ${MINICONDA_DIR}/bin/conda init bash
+
+    # Source the Conda initialization script to make 'conda' available in this script
+    echo "Sourcing Conda initialization script..."
+    source ${MINICONDA_DIR}/etc/profile.d/conda.sh
+
+    echo "Miniconda installation completed."
 }
 
-# Function to display error messages and exit
-echo_error() {
-    echo -e "\e[31m[ERROR]\e[0m $1"
-    exit 1
+# Function to update existing Miniconda installation
+update_miniconda() {
+    echo "=== Updating Existing Miniconda Installation ==="
+    # Source the Conda initialization script
+    source ${MINICONDA_DIR}/etc/profile.d/conda.sh
+
+    # Update Conda
+    conda update -y conda
+
+    echo "Miniconda update completed."
 }
 
-# ----------------------------
-# Step 0: Ensure the Script is Run as Root
-# ----------------------------
-if [ "$EUID" -ne 0 ]; then
-    echo_error "Please run this script with sudo or as root."
-fi
-
-# ----------------------------
-# Step 1: Define CUDA Version and Runfile
-# ----------------------------
-# CUDA Version and corresponding Runfile Installer
-CUDA_VERSION="12.6.3"
-CUDA_RUNFILE="cuda_${CUDA_VERSION}_560.35.05_linux.run"
-
-# Define the download URL
-CUDA_DOWNLOAD_URL="https://developer.download.nvidia.com/compute/cuda/${CUDA_VERSION}/local_installers/${CUDA_RUNFILE}"
-
-echo_info "Selected CUDA Version: ${CUDA_VERSION}"
-echo_info "CUDA Runfile: ${CUDA_RUNFILE}"
-echo_info "Download URL: ${CUDA_DOWNLOAD_URL}"
-
-# ----------------------------
-# Step 2: Clean Up Existing CUDA and NVIDIA Driver Installations
-# ----------------------------
-echo_info "Removing existing CUDA repositories and NVIDIA drivers..."
-
-# Define an array of package patterns to purge
-PACKAGES_TO_PURGE=(
-    '^nvidia-.*'
-    'cuda*'
-    'libcudnn*'
-    'libnccl*'
-)
-
-# Iterate over the package patterns and purge if installed
-for pkg_pattern in "${PACKAGES_TO_PURGE[@]}"; do
-    echo_info "Checking for installed packages matching pattern: ${pkg_pattern}"
-    # List installed packages matching the pattern
-    INSTALLED_PACKAGES=$(dpkg -l | grep -E "^ii\s+(${pkg_pattern//\*/.*})" | awk '{print $2}')
-
-    if [ -n "$INSTALLED_PACKAGES" ]; then
-        echo_info "Purging packages: $INSTALLED_PACKAGES"
-        apt-get purge -y $INSTALLED_PACKAGES
+# Function to check if Miniconda is installed
+check_miniconda_installed() {
+    if [ -d "${MINICONDA_DIR}" ]; then
+        echo "Miniconda is already installed at ${MINICONDA_DIR}."
+        return 0
     else
-        echo_warning "No installed packages match the pattern: ${pkg_pattern}"
+        echo "Miniconda is not installed."
+        return 1
     fi
-done
-
-# Autoremove any residual dependencies
-echo_info "Autoremoving unused packages..."
-apt-get autoremove -y
-
-echo_info "Cleanup of existing CUDA and NVIDIA drivers completed."
-
-# ----------------------------
-# Step 3: Install Essential Dependencies
-# ----------------------------
-echo_info "Installing essential tools: wget, curl, gnupg, build-essential, dkms..."
-
-apt-get update -y
-apt-get install -y wget curl gnupg build-essential dkms
-
-# ----------------------------
-# Step 4: Download the Correct CUDA Runfile Installer
-# ----------------------------
-echo_info "Downloading CUDA Runfile Installer (Version: ${CUDA_VERSION}) from ${CUDA_DOWNLOAD_URL}..."
-
-# Download the CUDA Runfile Installer
-wget "${CUDA_DOWNLOAD_URL}" -O "/tmp/${CUDA_RUNFILE}" || {
-    echo_error "Failed to download CUDA Runfile Installer from ${CUDA_DOWNLOAD_URL}. Please verify the URL and your internet connection."
 }
 
-# ----------------------------
-# Step 5: Make the Installer Executable
-# ----------------------------
-echo_info "Making the CUDA Runfile Installer executable..."
-chmod +x "/tmp/${CUDA_RUNFILE}"
-
-# ----------------------------
-# Step 6: Run the CUDA Runfile Installer
-# ----------------------------
-echo_info "Running the CUDA Runfile Installer..."
-
-# Install CUDA Toolkit and Samples without installing the driver
-sh "/tmp/${CUDA_RUNFILE}" --silent --toolkit --samples --override || {
-    echo_error "CUDA Runfile Installer failed. Please check the installer logs for details."
+# Function to check if Conda is available
+check_conda_available() {
+    if command_exists conda ; then
+        echo "Conda is available."
+        return 0
+    else
+        echo "Conda is not available in the current shell."
+        return 1
+    fi
 }
 
-# ----------------------------
-# Step 7: Set Up Environment Variables
-# ----------------------------
-echo_info "Setting up environment variables for CUDA..."
+# Function to create a new Conda environment
+create_conda_env() {
+    echo "=== Creating Conda environment '${ENV_NAME}' with Python ${PYTHON_VERSION} ==="
 
-# Determine the installed CUDA version
-CUDA_PATH=$(readlink -f /usr/local/cuda)
-CUDA_VERSION_INSTALLED=$(basename "$CUDA_PATH" | sed 's/cuda-//')
+    # Check if the environment already exists
+    if conda info --envs | grep -q "^${ENV_NAME} "; then
+        echo "Conda environment '${ENV_NAME}' already exists. Skipping creation."
+    else
+        conda create -y -n ${ENV_NAME} python=${PYTHON_VERSION}
+        echo "Conda environment '${ENV_NAME}' created."
+    fi
+}
 
-echo_info "Installed CUDA Version: ${CUDA_VERSION_INSTALLED}"
-echo_info "CUDA Path: ${CUDA_PATH}"
+# Function to activate the Conda environment
+activate_conda_env() {
+    echo "=== Activating Conda environment '${ENV_NAME}' ==="
+    # Initialize Conda in the current shell session
+    eval "$(conda shell.bash hook)"
+    conda activate ${ENV_NAME}
+}
 
-# Backup existing .bashrc if not already backed up
-if [ ! -f ~/.bashrc.cuda_backup ]; then
-    cp ~/.bashrc ~/.bashrc.cuda_backup
-    echo_info "Backed up your original ~/.bashrc to ~/.bashrc.cuda_backup"
-fi
+# Function to install CUDA Toolkit and cuDNN via Conda
+install_cuda_cudnn() {
+    echo "=== Installing CUDA Toolkit ${CUDA_VERSION} and cuDNN ${CUDNN_VERSION} ==="
+    conda install -y -c nvidia -c conda-forge cudatoolkit=${CUDA_VERSION} cudnn=${CUDNN_VERSION}
+    echo "CUDA Toolkit and cuDNN installation completed."
+}
 
-# Add CUDA to PATH if not already present
-if ! grep -q "/usr/local/cuda/bin" ~/.bashrc; then
-    echo "export PATH=/usr/local/cuda/bin:\$PATH" >> ~/.bashrc
-    echo_info "Added CUDA PATH to ~/.bashrc"
+# Function to install NCCL via Conda
+install_nccl() {
+    echo "=== Installing NCCL ==="
+    conda install -y -c nvidia -c conda-forge nccl
+    echo "NCCL installation completed."
+}
+
+# Function to install PyTorch with CUDA support
+install_pytorch_gpu() {
+    echo "=== Installing PyTorch with CUDA ${CUDA_VERSION} support ==="
+    conda install -y -c ${PYTORCH_CHANNEL} -c ${NVIDIA_CHANNEL} pytorch torchvision torchaudio cudatoolkit=${CUDA_VERSION}
+    echo "PyTorch with CUDA installation completed."
+}
+
+# Function to install PyTorch CPU-only
+install_pytorch_cpu() {
+    echo "=== Installing PyTorch (CPU-only) ==="
+    conda install -y -c ${PYTORCH_CHANNEL} pytorch torchvision torchaudio cpuonly
+    echo "PyTorch CPU-only installation completed."
+}
+
+# Function to install additional dependencies
+install_additional_dependencies() {
+    echo "=== Installing additional Python packages: matplotlib, pandas, psutil ==="
+    conda install -y -c conda-forge matplotlib pandas psutil
+    echo "Additional dependencies installation completed."
+}
+
+# Function to verify installations
+verify_installations() {
+    echo "=== Verifying installations ==="
+
+    echo "---- Verifying PyTorch and CUDA ----"
+    python -c "import torch; print('PyTorch version:', torch.__version__); print('CUDA available:', torch.cuda.is_available())"
+
+    echo "---- Verifying NCCL ----"
+    python -c "import torch.distributed as dist; print('NCCL available:', dist.is_nccl_available())"
+
+    echo "---- Verifying other packages ----"
+    python -c "import matplotlib; import pandas; import psutil; print('matplotlib version:', matplotlib.__version__); print('pandas version:', pandas.__version__); print('psutil version:', psutil.__version__)"
+}
+
+# Function to provide usage instructions
+usage_instructions() {
+    echo "------------------------------------------------------------"
+    echo "Setup Complete!"
+    echo "To activate the Conda environment, run:"
+    echo "    conda activate ${ENV_NAME}"
+    echo ""
+    echo "To run your distributed training script, use 'torchrun'."
+    echo "Example:"
+    echo "    torchrun --nproc_per_node=NUM_GPUS script_name.py NUM_BATCHES BATCH_SIZE [--device cpu|gpu] [--verbose]"
+    echo ""
+    echo "Replace 'NUM_GPUS', 'script_name.py', 'NUM_BATCHES', and 'BATCH_SIZE' with appropriate values."
+    echo "------------------------------------------------------------"
+}
+
+# Function to check and install NVIDIA drivers
+install_nvidia_drivers() {
+    echo "=== Checking NVIDIA Drivers ==="
+
+    if command_exists nvidia-smi ; then
+        echo "NVIDIA drivers are already installed."
+        return 0
+    else
+        echo "NVIDIA drivers are not installed. Proceeding with installation."
+
+        # Check if 'ubuntu-drivers' command is available
+        if ! command_exists ubuntu-drivers ; then
+            echo "'ubuntu-drivers' command not found. Installing 'ubuntu-drivers-common'..."
+            sudo apt update
+            sudo apt install -y ubuntu-drivers-common
+        fi
+
+        # Install recommended NVIDIA drivers
+        echo "Installing recommended NVIDIA drivers..."
+        sudo ubuntu-drivers autoinstall
+
+        # Inform user to reboot
+        echo "NVIDIA drivers installation is complete. A system reboot is required to activate the drivers."
+        echo "Please reboot your system by running 'sudo reboot' and then re-run this setup script."
+        exit 0
+    fi
+}
+
+# ------------------------------ Main Script ------------------------------
+
+# Step 1: Check if Miniconda is installed
+if check_miniconda_installed ; then
+    # Miniconda is installed
+    # Step 2: Check if Conda is available
+    if ! check_conda_available ; then
+        echo "Sourcing Conda initialization script to make 'conda' available..."
+        source ${MINICONDA_DIR}/etc/profile.d/conda.sh
+    fi
 else
-    echo_warning "CUDA PATH already exists in ~/.bashrc. Skipping."
+    # Miniconda is not installed; proceed to install
+    install_miniconda
 fi
 
-# Add CUDA to LD_LIBRARY_PATH if not already present
-if ! grep -q "/usr/local/cuda/lib64" ~/.bashrc; then
-    echo "export LD_LIBRARY_PATH=/usr/local/cuda/lib64:\$LD_LIBRARY_PATH" >> ~/.bashrc
-    echo_info "Added CUDA LD_LIBRARY_PATH to ~/.bashrc"
+# Optional: Update Conda to the latest version
+# Uncomment the following lines if you want to update Conda every time
+# echo "Would you like to update Conda to the latest version? [y/N]"
+# read -r response
+# if [[ "$response" =~ ^[Yy]$ ]]; then
+#     update_miniconda
+# else
+#     echo "Skipping Conda update."
+# fi
+
+# Step 2: Create Conda environment
+create_conda_env
+
+# Step 3: Activate Conda environment
+activate_conda_env
+
+# Step 4: Check for NVIDIA drivers and decide on GPU or CPU setup
+if install_nvidia_drivers ; then
+    # NVIDIA drivers are installed; proceed with GPU setup
+    echo "Proceeding with GPU-based PyTorch installation."
+    install_cuda_cudnn
+    install_nccl
+    install_pytorch_gpu
 else
-    echo_warning "CUDA LD_LIBRARY_PATH already exists in ~/.bashrc. Skipping."
+    # NVIDIA drivers are not installed; proceed with CPU-only setup
+    echo "Proceeding with CPU-only PyTorch installation."
+    install_pytorch_cpu
 fi
 
-# Apply the changes immediately within the script
-export PATH=/usr/local/cuda/bin:$PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+# Step 5: Install additional dependencies
+install_additional_dependencies
 
-# ----------------------------
-# Step 8: Create Symbolic Link /usr/local/cuda
-# ----------------------------
-echo_info "Creating symbolic link /usr/local/cuda pointing to /usr/local/cuda-${CUDA_VERSION_INSTALLED}..."
+# Step 6: Verify installations
+verify_installations
 
-# Create or update the symbolic link
-ln -sfn /usr/local/cuda-${CUDA_VERSION_INSTALLED} /usr/local/cuda
+# Step 7: Provide usage instructions
+usage_instructions
 
-echo_info "Symbolic link /usr/local/cuda created/updated successfully."
+# Optional: Deactivate the environment after setup
+# conda deactivate
 
-# ----------------------------
-# Step 9: Verify CUDA Installation
-# ----------------------------
-echo_info "Verifying CUDA installation..."
-
-if command -v nvcc >/dev/null 2>&1; then
-    echo_info "CUDA is installed successfully. Version details:"
-    nvcc --version
-else
-    echo_error "nvcc command not found. CUDA installation might have failed."
-fi
-
-# ----------------------------
-# Step 10: Install CUDA Samples and Run a Test
-# ----------------------------
-echo_info "Installing CUDA sample programs..."
-cuda-install-samples-${CUDA_VERSION}.sh ~/
-echo_info "Compiling and running the deviceQuery sample..."
-
-cd ~/NVIDIA_CUDA-${CUDA_VERSION}_Samples/1_Utilities/deviceQuery || {
-    echo_error "Failed to navigate to deviceQuery sample directory."
-}
-
-make || {
-    echo_error "Failed to compile the deviceQuery sample."
-}
-
-./deviceQuery || {
-    echo_error "deviceQuery test failed. Please check CUDA installation."
-}
-
-echo_info "deviceQuery test passed successfully."
-
-# ----------------------------
-# Step 11: Cleanup
-# ----------------------------
-# echo_info "Cleaning up the CUDA Runfile Installer..."
-# rm -f "/tmp/${CUDA_RUNFILE}"
-# echo_info "Removed the CUDA Runfile Installer."
-
-# ----------------------------
-# Step 12: Final Reboot Prompt
-# ----------------------------
-read -p "Do you want to reboot the system now to apply all changes? (y/N): " REBOOT_CONFIRM
-
-if [[ "$REBOOT_CONFIRM" =~ ^[Yy]$ ]]; then
-    echo_info "Rebooting the system..."
-    reboot
-else
-    echo_warning "Reboot skipped. Please remember to reboot the system later to apply all changes."
-fi
+# -----------------------------------------------------------------------------
