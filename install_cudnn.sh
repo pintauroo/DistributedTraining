@@ -2,6 +2,7 @@
 
 # Exit immediately if a command exits with a non-zero status
 set -e
+export DEBIAN_FRONTEND=noninteractive
 
 # Function to display error messages
 error_exit() {
