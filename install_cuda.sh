@@ -1,43 +1,53 @@
 #!/bin/bash
 
-# Exit immediately if a command exits with a non-zero status
-set -e
+set -e  # Exit immediately if a command exits with a non-zero status.
 
-# Function to display error messages
-error_exit() {
-    echo "Error: $1"
-    exit 1
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
 }
 
-# Set non-interactive mode to avoid blocking prompts
-export DEBIAN_FRONTEND=noninteractive
-
-# Verify if the system has a CUDA-capable GPU
-if ! lspci | grep -i nvidia; then
-    error_exit "No NVIDIA GPU detected. Ensure your system has a CUDA-capable GPU."
+### Step 1: Verify NVIDIA GPU Presence ###
+echo "Checking for NVIDIA GPU..."
+if ! lspci | grep -i nvidia >/dev/null; then
+    echo "No NVIDIA GPU detected. Exiting."
+    exit 1
 fi
+echo "NVIDIA GPU detected."
 
-# Remove any existing NVIDIA installations
-sudo apt purge -y nvidia* || error_exit "Failed to purge existing NVIDIA packages."
-sudo apt autoremove -y && sudo apt autoclean -y || error_exit "Failed to autoremove or autoclean packages."
-sudo rm -rf /usr/local/cuda* || error_exit "Failed to remove existing CUDA directories."
+### Step 2: Clean Up Existing NVIDIA and CUDA Installations ###
+echo "Removing existing NVIDIA and CUDA installations..."
+sudo apt-get purge -y 'nvidia-*' 'cuda*' 'libnvidia*' 'libcuda*' || true
+sudo rm -rf /etc/apt/sources.list.d/cuda*
+sudo apt-get autoremove -y
+sudo apt-get autoclean -y
+sudo rm -rf /usr/local/cuda*
+echo "Cleanup completed."
 
-# Update the system
-sudo apt update && sudo apt upgrade -y || error_exit "System update failed."
+### Step 3: System Update ###
+echo "Updating system packages..."
+sudo apt-get update
+sudo apt-get upgrade -y
+echo "System update completed."
 
-# Install essential packages, including ubuntu-drivers-common
-sudo apt install -y g++ freeglut3-dev build-essential libx11-dev libxmu-dev libxi-dev libglu1-mesa libglu1-mesa-dev ubuntu-drivers-common || error_exit "Failed to install essential packages."
+### Step 4: Install Required Packages ###
+echo "Installing required packages..."
+sudo apt-get install -y build-essential dkms freeglut3-dev gcc g++ \
+libxi-dev libxmu-dev libglu1-mesa libglu1-mesa-dev wget curl git
 
-# Add the graphics drivers PPA
-sudo add-apt-repository -y ppa:graphics-drivers/ppa || error_exit "Failed to add graphics-drivers PPA."
-sudo apt update || error_exit "Failed to update package list after adding PPA."
+### Step 5: Add Graphics Drivers PPA ###
+echo "Adding graphics drivers PPA..."
+sudo add-apt-repository -y ppa:graphics-drivers/ppa
+sudo apt-get update
 
-# Install the recommended NVIDIA driver
-sudo ubuntu-drivers autoinstall || error_exit "Failed to install NVIDIA driver."
+### Step 6: Install NVIDIA Driver ###
+# Install NVIDIA driver version 525 (compatible with CUDA 11.8)
+echo "Installing NVIDIA driver version 525..."
+sudo apt-get install -y nvidia-driver-525
 
-# Remove non-interactive mode to avoid issues for subsequent scripts
-unset DEBIAN_FRONTEND
+echo "NVIDIA driver installation completed."
 
-# Reboot the system to apply changes
-echo "Rebooting the system to apply NVIDIA driver changes..."
-sudo reboot now
+### Step 7: Reboot System ###
+echo "Rebooting system to load the new NVIDIA driver..."
+echo "After rebooting, please run the second script: install_cuda_cudnn_pytorch.sh"
+sudo reboot

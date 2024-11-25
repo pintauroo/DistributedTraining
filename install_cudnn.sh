@@ -1,60 +1,120 @@
 #!/bin/bash
 
-# Exit immediately if a command exits with a non-zero status
-set -e
+set -e  # Exit immediately if a command exits with a non-zero status.
 
-# Function to display error messages
-error_exit() {
-    echo "Error: $1"
-    exit 1
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
 }
 
-# Set non-interactive mode to avoid blocking prompts
-export DEBIAN_FRONTEND=noninteractive
+### Step 8: Verify NVIDIA Driver Installation ###
+echo "Verifying NVIDIA driver installation..."
+if ! command_exists nvidia-smi; then
+    echo "nvidia-smi not found. Please ensure the NVIDIA driver is installed correctly."
+    exit 1
+fi
 
-# Clean up and fix broken packages
-sudo apt-get clean || error_exit "Failed to clean apt cache."
-sudo apt-get autoremove -y || error_exit "Failed to autoremove packages."
-sudo dpkg --configure -a || error_exit "Failed to reconfigure dpkg."
-sudo apt-get install -f -y || error_exit "Failed to fix broken dependencies."
+nvidia-smi
+
+### Step 9: Install CUDA Toolkit 11.8 ###
+echo "Installing CUDA Toolkit 11.8..."
+
+# Add CUDA repository GPG key
+echo "Adding CUDA repository GPG key..."
+wget -O cuda-repo-key.pub https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub
+sudo apt-key add cuda-repo-key.pub
+rm cuda-repo-key.pub
 
 # Add CUDA repository
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin || error_exit "Failed to download CUDA repository pin."
-sudo mv cuda-ubuntu2204.pin /etc/apt/preferences.d/cuda-repository-pin-600 || error_exit "Failed to move CUDA repository pin."
+echo "Adding CUDA repository..."
+sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /"
+sudo apt-get update
 
-# Add the CUDA GPG key (to handle deprecation warnings)
-curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | sudo gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg || error_exit "Failed to fetch CUDA repository public key."
-echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" | sudo tee /etc/apt/sources.list.d/cuda.list > /dev/null || error_exit "Failed to add CUDA repository."
+# Install CUDA Toolkit 11.8
+echo "Installing CUDA Toolkit 11.8..."
+sudo apt-get install -y cuda-toolkit-11-8
 
-# Update package lists
-sudo apt-get update || error_exit "Failed to update package lists after adding CUDA repository."
+echo "CUDA Toolkit 11.8 installation completed."
 
-# Install CUDA 11.8
-sudo apt-get install -y cuda-11-8 || error_exit "Failed to install CUDA 11.8."
+### Step 10: Set Up Environment Variables ###
+echo "Setting up environment variables..."
+CUDA_VERSION=11.8
+CUDA_PATH=/usr/local/cuda-$CUDA_VERSION
 
-# Set up environment variables
-echo 'export PATH=/usr/local/cuda-11.8/bin:$PATH' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
-source ~/.bashrc || error_exit "Failed to source ~/.bashrc."
-sudo ldconfig || error_exit "Failed to run ldconfig."
+# Backup existing .bashrc
+cp ~/.bashrc ~/.bashrc.backup
 
-# Install cuDNN 9.5.1
-wget https://developer.download.nvidia.com/compute/cudnn/9.5.1/local_installers/cudnn-local-repo-ubuntu2204-9.5.1_1.0-1_amd64.deb || error_exit "Failed to download cuDNN installer."
-sudo dpkg -i cudnn-local-repo-ubuntu2204-9.5.1_1.0-1_amd64.deb || error_exit "Failed to install cuDNN repository."
-sudo cp /var/cudnn-local-repo-ubuntu2204-9.5.1/cudnn-*-keyring.gpg /usr/share/keyrings/ || error_exit "Failed to copy cuDNN keyring."
-sudo apt-get update || error_exit "Failed to update package list after adding cuDNN repository."
-sudo apt-get -y install cudnn-cuda-11 || error_exit "Failed to install cuDNN for CUDA 11."
-
-# Verify installations
-if ! nvidia-smi; then
-    error_exit "NVIDIA driver verification failed."
+# Add CUDA to PATH
+if ! grep -q "$CUDA_PATH/bin" ~/.bashrc; then
+    echo "export PATH=$CUDA_PATH/bin:\$PATH" >> ~/.bashrc
+    echo "Added CUDA bin to PATH."
 fi
 
-if ! nvcc -V; then
-    error_exit "CUDA installation verification failed."
+# Add CUDA libraries to LD_LIBRARY_PATH
+if ! grep -q "$CUDA_PATH/lib64" ~/.bashrc; then
+    echo "export LD_LIBRARY_PATH=$CUDA_PATH/lib64:\$LD_LIBRARY_PATH" >> ~/.bashrc
+    echo "Added CUDA lib64 to LD_LIBRARY_PATH."
 fi
 
-# Install PyTorch 2.0.0
-pip install torch==2.0.0 torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu118 || error_exit "Failed to install PyTorch 2.0.0."
+# Source the updated .bashrc
+source ~/.bashrc
 
-echo "Installation completed successfully."
+echo "Environment variables set up."
+
+### Step 11: Install cuDNN 8.7 for CUDA 11.8 ###
+echo "Installing cuDNN 8.7 for CUDA 11.8..."
+
+# Prompt user to download cuDNN
+echo "Please download cuDNN for CUDA 11.8 from NVIDIA's website:"
+echo "https://developer.nvidia.com/rdp/cudnn-download"
+echo "Ensure you have an NVIDIA Developer account. Place the cuDNN tar file (e.g., cudnn-linux-x86_64-8.7.0.84_cuda11-archive.tar.xz) in the current directory."
+read -p "Press Enter to continue after placing the cuDNN tar file..."
+
+# Check for cuDNN tar file
+CUDNN_TAR_FILE=$(ls cudnn-*-archive.tar.xz 2>/dev/null || true)
+if [ -z "$CUDNN_TAR_FILE" ]; then
+    echo "cuDNN tar file not found in the current directory. Exiting."
+    exit 1
+fi
+
+echo "Extracting cuDNN files..."
+tar -xf "$CUDNN_TAR_FILE"
+
+# Identify extracted cuDNN folder
+CUDNN_FOLDER=$(tar -tf "$CUDNN_TAR_FILE" | head -1 | cut -f1 -d"/")
+
+echo "Copying cuDNN files to CUDA directories..."
+sudo cp -P "$CUDNN_FOLDER/include/"* /usr/local/cuda-$CUDA_VERSION/include/
+sudo cp -P "$CUDNN_FOLDER/lib/"* /usr/local/cuda-$CUDA_VERSION/lib64/
+sudo chmod a+r /usr/local/cuda-$CUDA_VERSION/include/cudnn.h /usr/local/cuda-$CUDA_VERSION/lib64/libcudnn*
+
+# Clean up cuDNN files
+rm -rf "$CUDNN_FOLDER"
+rm "$CUDNN_TAR_FILE"
+
+echo "cuDNN installation completed."
+
+### Step 12: Verify Installation ###
+echo "Verifying CUDA and cuDNN installation..."
+nvidia-smi
+nvcc -V
+
+echo "CUDA and cuDNN verification completed."
+
+### Step 13: Install PyTorch with CUDA 11.8 Support ###
+echo "Installing PyTorch with CUDA 11.8 support..."
+# Ensure pip is installed
+if ! command_exists pip; then
+    echo "pip not found. Installing pip..."
+    sudo apt-get install -y python3-pip
+fi
+
+# Upgrade pip
+pip install --upgrade pip
+
+# Install PyTorch
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+echo "PyTorch installation completed successfully."
+
+echo "All installations completed successfully. Please restart your terminal or source your .bashrc to apply environment changes."
