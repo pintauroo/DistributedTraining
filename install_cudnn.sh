@@ -2,7 +2,6 @@
 
 # Exit immediately if a command exits with a non-zero status
 set -e
-export DEBIAN_FRONTEND=noninteractive
 
 # Function to display error messages
 error_exit() {
@@ -10,22 +9,28 @@ error_exit() {
     exit 1
 }
 
-# Verify NVIDIA driver installation
-if ! nvidia-smi; then
-    error_exit "NVIDIA driver installation failed or GPU not detected."
-fi
+# Set non-interactive mode to avoid blocking prompts
+export DEBIAN_FRONTEND=noninteractive
+
+# Clean up and fix broken packages
+sudo apt-get clean || error_exit "Failed to clean apt cache."
+sudo apt-get autoremove -y || error_exit "Failed to autoremove packages."
+sudo dpkg --configure -a || error_exit "Failed to reconfigure dpkg."
+sudo apt-get install -f -y || error_exit "Failed to fix broken dependencies."
 
 # Add CUDA repository
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin || error_exit "Failed to download CUDA repository pin."
 sudo mv cuda-ubuntu2204.pin /etc/apt/preferences.d/cuda-repository-pin-600 || error_exit "Failed to move CUDA repository pin."
-sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub || error_exit "Failed to fetch CUDA repository public key."
-sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" || error_exit "Failed to add CUDA repository."
+
+# Add the CUDA GPG key (to handle deprecation warnings)
+curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | sudo gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg || error_exit "Failed to fetch CUDA repository public key."
+echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" | sudo tee /etc/apt/sources.list.d/cuda.list > /dev/null || error_exit "Failed to add CUDA repository."
 
 # Update package lists
-sudo apt update || error_exit "Failed to update package lists after adding CUDA repository."
+sudo apt-get update || error_exit "Failed to update package lists after adding CUDA repository."
 
 # Install CUDA 11.8
-sudo apt install -y cuda-11-8 || error_exit "Failed to install CUDA 11.8."
+sudo apt-get install -y cuda-11-8 || error_exit "Failed to install CUDA 11.8."
 
 # Set up environment variables
 echo 'export PATH=/usr/local/cuda-11.8/bin:$PATH' >> ~/.bashrc
