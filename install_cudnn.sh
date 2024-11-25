@@ -37,7 +37,7 @@ sudo chmod a+r /usr/local/cuda-11.8/lib64/libcudnn*
 # nvidia-smi
 # nvcc -V
 
-sudo apt install python3-pip
+sudo apt install python3-pip -y
 
 # Install PyTorch with CUDA 11.8 support
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
