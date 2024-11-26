@@ -13,19 +13,6 @@ import csv
 import psutil  # For CPU and Memory metrics
 import torch.cuda as cuda
 
-# ------------------------ Logger Class ------------------------
-class Logger:
-    """
-    Logger class to handle logging based on verbosity flag.
-    """
-    def __init__(self, verbose: bool):
-        self.verbose = verbose
-
-    def log(self, message: str):
-        if self.verbose:
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{timestamp}] {message}")
-
 # --------------------- DataCollector Class ---------------------
 class DataCollector:
     """
@@ -94,9 +81,7 @@ class Net(nn.Module):
         return x
 
 # -------------------- Parameter Server Function --------------------
-def parameter_server(rank, size, num_batches, device, logger: Logger, collector: DataCollector, backend: str):
-    logger.log(f"[Parameter Server] Initializing on device {device} with backend {backend}.")
-
+def parameter_server(rank, size, num_batches, device, collector: DataCollector, backend: str):
     # Initialize process group
     dist.init_process_group(
         backend=backend,  # Use NCCL if GPU, Gloo if CPU
@@ -105,7 +90,6 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
         rank=rank,
         timeout=datetime.timedelta(seconds=300)
     )
-    logger.log(f"[Parameter Server] Process group initialized.")
 
     # Initialize model and optimizer
     model = Net().to(device)
@@ -116,14 +100,12 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
     param_tensors = [param.data for param in model.parameters()]
     param_shapes = [param.data.shape for param in model.parameters()]
     param_flat = flatten_tensors(param_tensors).to(device)
-    logger.log(f"[Parameter Server] Flattened parameters size: {param_flat.size()}")
 
     # Synchronize all processes
     dist.barrier()
 
     for batch_idx in range(num_batches):
         batch_start_time = time.time()
-        logger.log(f"[Parameter Server] Starting batch {batch_idx + 1}/{num_batches}")
         batch_metrics = {'batch': batch_idx + 1}
 
         # Collect system metrics for PS
@@ -145,9 +127,7 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
         # Send parameters to all workers
         send_params_start = time.time()
         for worker_rank in range(1, size):
-            logger.log(f"[Parameter Server] Sending parameters to worker {worker_rank}")
             dist.send(tensor=param_flat, dst=worker_rank)
-            logger.log(f"[Parameter Server] Sent parameters to worker {worker_rank}")
         send_params_end = time.time()
         batch_metrics['send_params_time'] = send_params_end - send_params_start
 
@@ -156,17 +136,13 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
         grad_flat = torch.zeros_like(param_flat, device=device)
         init_grad_acc_end = time.time()
         batch_metrics['init_grad_accumulator_time'] = init_grad_acc_end - init_grad_acc_start
-        logger.log(f"[Parameter Server] Initialized gradient accumulator.")
 
         # Receive gradients from all workers and sum them
         recv_grads_start = time.time()
         for worker_rank in range(1, size):
-            logger.log(f"[Parameter Server] Receiving gradients from worker {worker_rank}")
             worker_grad_flat = torch.zeros_like(param_flat, device=device)
             dist.recv(tensor=worker_grad_flat, src=worker_rank)
-            logger.log(f"[Parameter Server] Received gradients from worker {worker_rank}")
             grad_flat += worker_grad_flat
-            logger.log(f"[Parameter Server] Accumulated gradients. Current grad_flat sum: {grad_flat.sum().item()}")
         recv_grads_end = time.time()
         batch_metrics['receive_gradients_time'] = recv_grads_end - recv_grads_start
 
@@ -175,14 +151,12 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
         grad_flat /= world_size_workers
         avg_grads_end = time.time()
         batch_metrics['average_gradients_time'] = avg_grads_end - avg_grads_start
-        logger.log(f"[Parameter Server] Averaged gradients. grad_flat mean: {grad_flat.mean().item()}")
 
         # Unflatten gradients and set them in the model
         unflatten_grads_start = time.time()
         unflattened_grads = unflatten_tensors(grad_flat, param_shapes)
         for param, grad in zip(model.parameters(), unflattened_grads):
             param.grad = grad.clone()
-            logger.log(f"[Parameter Server] Set gradient for parameter {param.shape}")
         unflatten_grads_end = time.time()
         batch_metrics['unflatten_grads_time'] = unflatten_grads_end - unflatten_grads_start
 
@@ -191,14 +165,12 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
         optimizer.step()
         optimizer_step_end = time.time()
         batch_metrics['optimizer_step_time'] = optimizer_step_end - optimizer_step_start
-        logger.log(f"[Parameter Server] Updated model parameters.")
 
         # Zero optimizer gradients
         zero_grad_start = time.time()
         optimizer.zero_grad()
         zero_grad_end = time.time()
         batch_metrics['optimizer_zero_grad_time'] = zero_grad_end - zero_grad_start
-        logger.log(f"[Parameter Server] Zeroed optimizer gradients.")
 
         # Update flattened parameter tensor with new parameters
         update_flat_params_start = time.time()
@@ -206,7 +178,6 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
         param_flat = flatten_tensors(param_tensors).to(device)
         update_flat_params_end = time.time()
         batch_metrics['update_flattened_params_time'] = update_flat_params_end - update_flat_params_start
-        logger.log(f"[Parameter Server] Updated flattened parameters for next batch.")
 
         batch_end_time = time.time()
         batch_duration = batch_end_time - batch_start_time
@@ -215,14 +186,9 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
         # Record batch metrics
         collector.record(**batch_metrics)
 
-        logger.log(f"[Parameter Server] Batch {batch_idx + 1} completed.\n")
-
-    logger.log(f"[Parameter Server] Training completed. Synchronizing before shutdown.")
-
     # Collect data from workers
     worker_data_collected = []
     for worker_rank in range(1, size):
-        logger.log(f"[Parameter Server] Receiving collected data from worker {worker_rank}")
         # First receive the length of the JSON string
         length_tensor = torch.zeros(1, dtype=torch.int32, device=device)  # On GPU
         dist.recv(tensor=length_tensor, src=worker_rank)
@@ -237,7 +203,6 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
             entry['Role'] = 'Worker'
             entry['Rank'] = worker_rank
         worker_data_collected.extend(worker_data)
-        logger.log(f"[Parameter Server] Received data from Worker {worker_rank}")
 
     # Combine PS data and worker data
     ps_data = collector.get_data()
@@ -255,7 +220,6 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
     fieldnames = sorted(fieldnames)
 
     csv_filename = 'training_metrics.csv'
-    logger.log(f"[Parameter Server] Saving collected data to {csv_filename}")
 
     with open(csv_filename, mode='w', newline='') as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
@@ -263,17 +227,12 @@ def parameter_server(rank, size, num_batches, device, logger: Logger, collector:
         for entry in all_data:
             writer.writerow(entry)
 
-    logger.log(f"[Parameter Server] Data saved successfully.")
-
     # Destroy process group
     dist.barrier()
     dist.destroy_process_group()
-    logger.log(f"[Parameter Server] Process group destroyed.")
 
 # ------------------------ Worker Function ------------------------
-def worker(rank, size, num_batches, batch_size, device, logger: Logger, collector: DataCollector, backend: str):
-    logger.log(f"[Worker {rank}] Initializing on device {device} with backend {backend}.")
-
+def worker(rank, size, num_batches, batch_size, device, collector: DataCollector, backend: str):
     # Initialize process group
     dist.init_process_group(
         backend=backend,  # Use NCCL if GPU, Gloo if CPU
@@ -282,7 +241,6 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
         rank=rank,
         timeout=datetime.timedelta(seconds=300)
     )
-    logger.log(f"[Worker {rank}] Process group initialized.")
 
     # Set up data loader with DistributedSampler
     transform = transforms.Compose([
@@ -294,18 +252,15 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
     sampler = DistributedSampler(dataset, num_replicas=size - 1, rank=rank - 1, shuffle=True)
     data_loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=True if device.type == 'cuda' else False)
     data_iter = iter(data_loader)
-    logger.log(f"[Worker {rank}] Data loader initialized with batch size {batch_size}.")
 
     # Initialize model
     model = Net().to(device)
-    logger.log(f"[Worker {rank}] Model initialized and moved to device {device}.")
 
     # Prepare flattened parameter tensor and shapes
     param_tensors = [param.data for param in model.parameters()]
     param_shapes = [param.data.shape for param in model.parameters()]
     total_params = sum(p.numel() for p in model.parameters())
     param_flat = torch.zeros(total_params, device=device)
-    logger.log(f"[Worker {rank}] Initialized parameter tensor of size {param_flat.size()}.")
 
     # Initialize loss collector
     loss_list = []
@@ -315,7 +270,6 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
 
     for batch_idx in range(num_batches):
         batch_start_time = time.time()
-        logger.log(f"[Worker {rank}] Starting batch {batch_idx + 1}/{num_batches}")
         batch_metrics = {'batch': batch_idx + 1}
 
         # Collect system metrics for Worker
@@ -336,9 +290,7 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
 
         # Receive parameters from parameter server
         recv_params_start = time.time()
-        logger.log(f"[Worker {rank}] Receiving parameters from parameter server.")
         dist.recv(tensor=param_flat, src=0)
-        logger.log(f"[Worker {rank}] Received parameters. Parameter tensor size: {param_flat.size()}")
         recv_params_end = time.time()
         batch_metrics['receive_params_time'] = recv_params_end - recv_params_start
 
@@ -347,7 +299,6 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
         unflattened_params = unflatten_tensors(param_flat, param_shapes)
         for param, new_data in zip(model.parameters(), unflattened_params):
             param.data.copy_(new_data)
-            logger.log(f"[Worker {rank}] Updated parameter {param.shape} with received data.")
         unflatten_params_end = time.time()
         batch_metrics['unflatten_params_time'] = unflatten_params_end - unflatten_params_start
 
@@ -355,33 +306,27 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
         data_loading_start = time.time()
         try:
             data, target = next(data_iter)
-            logger.log(f"[Worker {rank}] Fetched data batch.")
         except StopIteration:
-            logger.log(f"[Worker {rank}] Reinitializing data iterator.")
             data_iter = iter(data_loader)
             data, target = next(data_iter)
-            logger.log(f"[Worker {rank}] Fetched data batch after reinitializing iterator.")
         data_loading_end = time.time()
         batch_metrics['data_loading_time'] = data_loading_end - data_loading_start
 
         # Move data to device
         data_to_device_start = time.time()
         data, target = data.to(device), target.to(device)
-        logger.log(f"[Worker {rank}] Moved data to device {device}.")
         data_to_device_end = time.time()
         batch_metrics['data_to_device_time'] = data_to_device_end - data_to_device_start
 
         # Zero gradients
         zero_grad_start = time.time()
         model.zero_grad()
-        logger.log(f"[Worker {rank}] Zeroed model gradients.")
         zero_grad_end = time.time()
         batch_metrics['zero_grad_time'] = zero_grad_end - zero_grad_start
 
         # Forward pass
         forward_pass_start = time.time()
         output = model(data)
-        logger.log(f"[Worker {rank}] Completed forward pass.")
         forward_pass_end = time.time()
         batch_metrics['forward_pass_time'] = forward_pass_end - forward_pass_start
 
@@ -389,7 +334,6 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
         compute_loss_start = time.time()
         loss = nn.functional.cross_entropy(output, target)
         loss_value = loss.item()
-        logger.log(f"[Worker {rank}] Computed loss: {loss_value}.")
         compute_loss_end = time.time()
         batch_metrics['compute_loss_time'] = compute_loss_end - compute_loss_start
         batch_metrics['loss'] = loss_value
@@ -397,7 +341,6 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
         # Backward pass
         backward_pass_start = time.time()
         loss.backward()
-        logger.log(f"[Worker {rank}] Completed backward pass.")
         backward_pass_end = time.time()
         batch_metrics['backward_pass_time'] = backward_pass_end - backward_pass_start
 
@@ -405,15 +348,12 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
         flatten_grad_start = time.time()
         grad_tensors = [param.grad for param in model.parameters()]
         grad_flat = flatten_tensors(grad_tensors).to(device)
-        logger.log(f"[Worker {rank}] Flattened gradients. Gradient tensor size: {grad_flat.size()}.")
         flatten_grad_end = time.time()
         batch_metrics['flatten_grad_time'] = flatten_grad_end - flatten_grad_start
 
         # Send gradients to parameter server
         send_grads_start = time.time()
-        logger.log(f"[Worker {rank}] Sending gradients to parameter server.")
         dist.send(tensor=grad_flat, dst=0)
-        logger.log(f"[Worker {rank}] Sent gradients to parameter server.")
         send_grads_end = time.time()
         batch_metrics['send_gradients_time'] = send_grads_end - send_grads_start
 
@@ -429,10 +369,6 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
         # Record batch metrics
         collector.record(**batch_metrics)
 
-        logger.log(f"[Worker {rank}] Batch {batch_idx + 1} completed.\n")
-
-    logger.log(f"[Worker {rank}] Training completed. Sending collected data to parameter server.")
-
     # Serialize collected data
     collected_data = collector.serialize()
     data_bytes = collected_data.encode('utf-8')
@@ -445,29 +381,20 @@ def worker(rank, size, num_batches, batch_size, device, logger: Logger, collecto
     # Then send the actual data
     dist.send(tensor=data_tensor, dst=0)
 
-    logger.log(f"[Worker {rank}] Data sent to parameter server.")
-
     # Destroy process group
     dist.barrier()
     dist.destroy_process_group()
-    logger.log(f"[Worker {rank}] Process group destroyed.")
 
 # ------------------------- Run Function -------------------------
-def run(rank, size, num_batches, batch_size, device, verbose: bool):
-    logger = Logger(verbose=verbose)
+def run(rank, size, num_batches, batch_size, device, backend: str):
     collector = DataCollector(role='PS' if rank == 0 else 'Worker')
-
-    # Determine backend based on device
-    backend = 'nccl' if device.type == 'cuda' else 'gloo'
 
     if rank == 0:
         # Parameter Server can run on CPU or GPU based on the device argument
-        logger.log(f"[Run] Parameter server running on device {device}.")
-        parameter_server(rank, size, num_batches, device, logger, collector, backend)
+        parameter_server(rank, size, num_batches, device, collector, backend)
     else:
         # Workers can run on CPU or GPU based on the device argument
-        logger.log(f"[Run] Worker {rank} running on device {device}.")
-        worker(rank, size, num_batches, batch_size, device, logger, collector, backend)
+        worker(rank, size, num_batches, batch_size, device, collector, backend)
 
 # ------------------------ Main Execution ------------------------
 if __name__ == "__main__":
@@ -476,8 +403,6 @@ if __name__ == "__main__":
     parser.add_argument("batch_size", type=int, help="Batch size for DataLoader")
     parser.add_argument("--device", type=str, choices=["cpu", "gpu"], default=None,
                         help="Device to use: 'cpu' or 'gpu'. If not specified, defaults to GPU if available, else CPU.")
-    parser.add_argument("--verbose", action='store_true',
-                        help="Enable detailed logging.")
     args = parser.parse_args()
 
     # torchrun sets WORLD_SIZE and RANK automatically
@@ -503,4 +428,6 @@ if __name__ == "__main__":
         else:
             device = torch.device("cpu")
 
-    run(rank, world_size, args.num_batches, args.batch_size, device, verbose=args.verbose)
+    backend = 'nccl' if device.type == 'cuda' else 'gloo'
+
+    run(rank, world_size, args.num_batches, args.batch_size, device, backend)
