@@ -23,7 +23,7 @@ verify:
 find /usr -name "libnccl-net.so" 2>/dev/null
 
 export:
-
+ 
 export LD_LIBRARY_PATH=/usr/local/nccl/lib:$LD_LIBRARY_PATH
 
 <!-- Enable interface: -->
@@ -90,26 +90,102 @@ export MASTER_ADDR=192.168.1.2
 export MASTER_PORT=12355
 export WORLD_SIZE=3
 export RANK=0
-torchrun --nproc_per_node=1 --nnodes=3 --node_rank=0 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server.py 10000 32 --device gpu --verbose
+torchrun --nproc_per_node=1 --nnodes=3 --node_rank=0 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server_reduce_broadcast.py 10000 32 --device gpu --verbose
 
 
 # worker 1
-export TP_SOCKET_IFNAME=enp8s0
-export GLOO_SOCKET_IFNAME=enp8s0
-export NCCL_SOCKET_IFNAME=enp8s0
-export MASTER_ADDR=192.168.1.2
-export MASTER_PORT=12355
-export WORLD_SIZE=3
-export RANK=1
-torchrun --nproc_per_node=1 --nnodes=3 --node_rank=1 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server. py 10000 32 --device gpu --verbose
-
-
-# worker 2
 export TP_SOCKET_IFNAME=enp7s0
 export GLOO_SOCKET_IFNAME=enp7s0
 export NCCL_SOCKET_IFNAME=enp7s0
 export MASTER_ADDR=192.168.1.2
 export MASTER_PORT=12355
 export WORLD_SIZE=3
+export RANK=1
+torchrun --nproc_per_node=1 --nnodes=3 --node_rank=1 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server_reduce_broadcast.py 10000 32 --device gpu --verbose
+
+
+# worker 2
+export TP_SOCKET_IFNAME=enp8s0
+export GLOO_SOCKET_IFNAME=enp8s0
+export NCCL_SOCKET_IFNAME=enp8s0
+export MASTER_ADDR=192.168.1.2
+export MASTER_PORT=12355
+export WORLD_SIZE=3
 export RANK=2
-torchrun --nproc_per_node=1 --nnodes=3 --node_rank=2 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server.py 10000 32 --device gpu --verbose
+torchrun --nproc_per_node=1 --nnodes=3 --node_rank=2 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server_reduce_broadcast.py 10000 32 --device gpu --verbose
+
+
+
+
+#  2 rank confgig
+
+
+# PS
+export TP_SOCKET_IFNAME=enp8s0
+export GLOO_SOCKET_IFNAME=enp8s0
+export NCCL_SOCKET_IFNAME=enp8s0
+export MASTER_ADDR=192.168.1.2
+export MASTER_PORT=12355
+export WORLD_SIZE=2
+export RANK=0
+torchrun --nproc_per_node=1 --nnodes=2 --node_rank=0 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server_reduce_broadcast.py 10000 32 --device gpu --verbose
+
+
+# worker 1
+export TP_SOCKET_IFNAME=enp7s0
+export GLOO_SOCKET_IFNAME=enp7s0
+export NCCL_SOCKET_IFNAME=enp7s0
+export MASTER_ADDR=192.168.1.2
+export MASTER_PORT=12355
+export WORLD_SIZE=2
+export RANK=1
+torchrun --nproc_per_node=1 --nnodes=2 --node_rank=1 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server_reduce_broadcast.py 10000 32 --device gpu --verbose
+
+
+
+# 
+#  4 rank confgig
+
+
+# PS
+export TP_SOCKET_IFNAME=enp8s0
+export GLOO_SOCKET_IFNAME=enp8s0
+export NCCL_SOCKET_IFNAME=enp8s0
+export MASTER_ADDR=192.168.1.2
+export MASTER_PORT=12355
+export WORLD_SIZE=4
+export RANK=0
+torchrun --nproc_per_node=1 --nnodes=4 --node_rank=0 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server_reduce_broadcast.py 10000 32 --device gpu --verbose
+
+
+# worker 1
+export TP_SOCKET_IFNAME=enp7s0
+export GLOO_SOCKET_IFNAME=enp7s0
+export NCCL_SOCKET_IFNAME=enp7s0
+export MASTER_ADDR=192.168.1.2
+export MASTER_PORT=12355
+export WORLD_SIZE=4
+export RANK=1
+torchrun --nproc_per_node=1 --nnodes=4 --node_rank=1 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server_reduce_broadcast.py 10000 32 --device gpu --verbose
+
+
+# worker 2
+export TP_SOCKET_IFNAME=enp8s0
+export GLOO_SOCKET_IFNAME=enp8s0
+export NCCL_SOCKET_IFNAME=enp8s0
+export MASTER_ADDR=192.168.1.2
+export MASTER_PORT=12355
+export WORLD_SIZE=4
+export RANK=2
+torchrun --nproc_per_node=1 --nnodes=4 --node_rank=2 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server_reduce_broadcast.py 10000 32 --device gpu --verbose
+
+# worker 3
+export TP_SOCKET_IFNAME=enp8s0
+export GLOO_SOCKET_IFNAME=enp8s0
+export NCCL_SOCKET_IFNAME=enp8s0
+export MASTER_ADDR=192.168.1.2
+export MASTER_PORT=12355
+export WORLD_SIZE=4
+export RANK=2
+torchrun --nproc_per_node=1 --nnodes=4 --node_rank=3 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server_reduce_broadcast.py 10000 32 --device gpu --verbose
+
