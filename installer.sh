@@ -19,28 +19,30 @@ MINICONDA_DIR="$HOME/miniconda3"
 install_miniconda() {
     if [ ! -d "${MINICONDA_DIR}" ]; then
         echo "Installing Miniconda..."
-        wget -O ~/miniconda.sh ${MINICONDA_URL}
-        chmod +x ~/miniconda.sh
-        bash ~/miniconda.sh -b -p ${MINICONDA_DIR}
-        rm ~/miniconda.sh
-        source ${MINICONDA_DIR}/etc/profile.d/conda.sh
+        mkdir -p "${MINICONDA_DIR}"
+        wget "${MINICONDA_URL}" -O "${MINICONDA_DIR}/miniconda.sh"
+        bash "${MINICONDA_DIR}/miniconda.sh" -b -u -p "${MINICONDA_DIR}"
+        rm "${MINICONDA_DIR}/miniconda.sh"
+        source "${MINICONDA_DIR}/bin/activate"
+        conda init --all
     else
         echo "Miniconda is already installed."
-        source ${MINICONDA_DIR}/etc/profile.d/conda.sh
+        source "${MINICONDA_DIR}/bin/activate"
     fi
 }
 
 # Function to create and activate Conda environment
 setup_conda_env() {
+    echo "Initializing Conda for the current shell..."
+    eval "$(conda shell.bash hook)"
     if ! conda info --envs | grep -q "^${ENV_NAME} "; then
         echo "Creating Conda environment '${ENV_NAME}'..."
-        conda create -y -n ${ENV_NAME} python=${PYTHON_VERSION}
+        conda create -y -n "${ENV_NAME}" python="${PYTHON_VERSION}"
     else
         echo "Conda environment '${ENV_NAME}' already exists."
     fi
     echo "Activating Conda environment '${ENV_NAME}'..."
-    eval "$(conda shell.bash hook)"
-    conda activate ${ENV_NAME}
+    conda activate "${ENV_NAME}"
 }
 
 # Function to install additional dependencies
