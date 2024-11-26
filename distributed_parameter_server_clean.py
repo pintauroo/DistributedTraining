@@ -13,34 +13,6 @@ import csv
 import psutil  # For CPU and Memory metrics
 import torch.cuda as cuda
 
-# --------------------- DataCollector Class ---------------------
-class DataCollector:
-    """
-    DataCollector class to collect and store training metrics.
-    """
-    def __init__(self, role: str):
-        self.role = role  # 'PS' or 'Worker'
-        self.data = []
-
-    def record(self, **kwargs):
-        self.data.append(kwargs)
-
-    def get_data(self):
-        return self.data
-
-    def serialize(self):
-        """
-        Serialize the collected data to a JSON string.
-        """
-        return json.dumps(self.data)
-
-    @staticmethod
-    def deserialize(json_str: str):
-        """
-        Deserialize JSON string back to data list.
-        """
-        return json.loads(json_str)
-
 # Define utility functions to flatten and unflatten tensors
 def flatten_tensors(tensors):
     return torch.cat([t.contiguous().view(-1) for t in tensors])
@@ -81,7 +53,7 @@ class Net(nn.Module):
         return x
 
 # -------------------- Parameter Server Function --------------------
-def parameter_server(rank, size, num_batches, device, collector: DataCollector, backend: str):
+def parameter_server(rank, size, num_batches, device, backend: str):
     # Initialize process group
     dist.init_process_group(
         backend=backend,  # Use NCCL if GPU, Gloo if CPU
@@ -183,56 +155,12 @@ def parameter_server(rank, size, num_batches, device, collector: DataCollector, 
         batch_duration = batch_end_time - batch_start_time
         batch_metrics['batch_duration'] = batch_duration
 
-        # Record batch metrics
-        collector.record(**batch_metrics)
-
-    # Collect data from workers
-    worker_data_collected = []
-    for worker_rank in range(1, size):
-        # First receive the length of the JSON string
-        length_tensor = torch.zeros(1, dtype=torch.int32, device=device)  # On GPU
-        dist.recv(tensor=length_tensor, src=worker_rank)
-        data_length = length_tensor.item()
-        # Now receive the actual data
-        data_tensor = torch.zeros(data_length, dtype=torch.uint8, device=device)  # On GPU
-        dist.recv(tensor=data_tensor, src=worker_rank)
-        json_str = data_tensor.cpu().numpy().tobytes().decode('utf-8')  # Move to CPU for processing
-        worker_data = DataCollector.deserialize(json_str)
-        # Add worker rank to each entry
-        for entry in worker_data:
-            entry['Role'] = 'Worker'
-            entry['Rank'] = worker_rank
-        worker_data_collected.extend(worker_data)
-
-    # Combine PS data and worker data
-    ps_data = collector.get_data()
-    for entry in ps_data:
-        entry['Role'] = 'PS'
-        entry['Rank'] = rank  # PS rank is 0
-
-    all_data = ps_data + worker_data_collected
-
-    # Get all fieldnames
-    fieldnames = set()
-    for entry in all_data:
-        fieldnames.update(entry.keys())
-
-    fieldnames = sorted(fieldnames)
-
-    csv_filename = 'training_metrics.csv'
-
-    with open(csv_filename, mode='w', newline='') as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-        writer.writeheader()
-        for entry in all_data:
-            writer.writerow(entry)
-
     # Destroy process group
     dist.barrier()
     dist.destroy_process_group()
 
 # ------------------------ Worker Function ------------------------
-def worker(rank, size, num_batches, batch_size, device, collector: DataCollector, backend: str):
+def worker(rank, size, num_batches, batch_size, device, backend: str):
     # Initialize process group
     dist.init_process_group(
         backend=backend,  # Use NCCL if GPU, Gloo if CPU
@@ -261,9 +189,6 @@ def worker(rank, size, num_batches, batch_size, device, collector: DataCollector
     param_shapes = [param.data.shape for param in model.parameters()]
     total_params = sum(p.numel() for p in model.parameters())
     param_flat = torch.zeros(total_params, device=device)
-
-    # Initialize loss collector
-    loss_list = []
 
     # Synchronize all processes
     dist.barrier()
@@ -361,40 +286,18 @@ def worker(rank, size, num_batches, batch_size, device, collector: DataCollector
         batch_duration = batch_end_time - batch_start_time
         batch_metrics['batch_duration'] = batch_duration
 
-        # Calculate throughput (samples per second)
-        samples_processed = data.size(0)
-        throughput = samples_processed / batch_duration if batch_duration > 0 else 0
-        batch_metrics['throughput_samples_per_sec'] = throughput
-
-        # Record batch metrics
-        collector.record(**batch_metrics)
-
-    # Serialize collected data
-    collected_data = collector.serialize()
-    data_bytes = collected_data.encode('utf-8')
-    data_length = len(data_bytes)
-    data_tensor = torch.ByteTensor(list(data_bytes)).to(device)  # Move to GPU
-    length_tensor = torch.tensor([data_length], dtype=torch.int32).to(device)  # Move to GPU
-
-    # Send length first
-    dist.send(tensor=length_tensor, dst=0)
-    # Then send the actual data
-    dist.send(tensor=data_tensor, dst=0)
-
     # Destroy process group
     dist.barrier()
     dist.destroy_process_group()
 
 # ------------------------- Run Function -------------------------
 def run(rank, size, num_batches, batch_size, device, backend: str):
-    collector = DataCollector(role='PS' if rank == 0 else 'Worker')
-
     if rank == 0:
         # Parameter Server can run on CPU or GPU based on the device argument
-        parameter_server(rank, size, num_batches, device, collector, backend)
+        parameter_server(rank, size, num_batches, device, backend)
     else:
         # Workers can run on CPU or GPU based on the device argument
-        worker(rank, size, num_batches, batch_size, device, collector, backend)
+        worker(rank, size, num_batches, batch_size, device, backend)
 
 # ------------------------ Main Execution ------------------------
 if __name__ == "__main__":
