@@ -56,7 +56,7 @@ def parameter_server(rank, size, num_batches, device, backend: str):
         init_method='env://',
         world_size=size,
         rank=rank,
-        timeout=datetime.timedelta(seconds=300)
+        timeout=torch.distributed.distributed_c10d.TIMEOUT
     )
 
     # Initialize model and optimizer
@@ -73,6 +73,8 @@ def parameter_server(rank, size, num_batches, device, backend: str):
     dist.barrier()
 
     for batch_idx in range(num_batches):
+        batch_start_time = time.time()
+
         # Broadcast parameters to all workers
         dist.broadcast(tensor=param_flat, src=0)
 
@@ -100,6 +102,8 @@ def parameter_server(rank, size, num_batches, device, backend: str):
         param_tensors = [param.data for param in model.parameters()]
         param_flat = flatten_tensors(param_tensors).to(device)
 
+        batch_end_time = time.time()
+
     # Destroy process group
     dist.barrier()
     dist.destroy_process_group()
@@ -112,7 +116,7 @@ def worker(rank, size, num_batches, batch_size, device, backend: str):
         init_method='env://',
         world_size=size,
         rank=rank,
-        timeout=datetime.timedelta(seconds=300)
+        timeout=torch.distributed.distributed_c10d.TIMEOUT
     )
 
     # Set up data loader with DistributedSampler
@@ -120,15 +124,9 @@ def worker(rank, size, num_batches, batch_size, device, backend: str):
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
     ])
-    # Ensure dataset is pre-downloaded to avoid delays
     dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
     sampler = DistributedSampler(dataset, num_replicas=size - 1, rank=rank - 1, shuffle=True)
-    data_loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        sampler=sampler,
-        pin_memory=True if device.type == 'cuda' else False
-    )
+    data_loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=True if device.type == 'cuda' else False)
     data_iter = iter(data_loader)
 
     # Initialize model
@@ -144,6 +142,8 @@ def worker(rank, size, num_batches, batch_size, device, backend: str):
     dist.barrier()
 
     for batch_idx in range(num_batches):
+        batch_start_time = time.time()
+
         # Receive parameters from parameter server via broadcast
         dist.broadcast(tensor=param_flat, src=0)
 
@@ -181,6 +181,8 @@ def worker(rank, size, num_batches, batch_size, device, backend: str):
         # Reduce gradients to parameter server
         dist.reduce(tensor=grad_flat, dst=0, op=dist.ReduceOp.SUM)
 
+        batch_end_time = time.time()
+
     # Destroy process group
     dist.barrier()
     dist.destroy_process_group()
@@ -188,15 +190,13 @@ def worker(rank, size, num_batches, batch_size, device, backend: str):
 # ------------------------- Run Function -------------------------
 def run(rank, size, num_batches, batch_size, device, backend: str):
     if rank == 0:
-        # Parameter Server can run on CPU or GPU based on the device argument
         parameter_server(rank, size, num_batches, device, backend)
     else:
-        # Workers can run on CPU or GPU based on the device argument
         worker(rank, size, num_batches, batch_size, device, backend)
 
 # ------------------------ Main Execution ------------------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Distributed Parameter Server Training")
+    parser = argparse.ArgumentParser(description="Distributed Parameter Server Training with Broadcast and Reduce")
     parser.add_argument("num_batches", type=int, help="Number of batches to process")
     parser.add_argument("batch_size", type=int, help="Batch size for DataLoader")
     parser.add_argument("--device", type=str, choices=["cpu", "gpu"], default=None,
@@ -215,7 +215,7 @@ if __name__ == "__main__":
                 device_id = rank % torch.cuda.device_count()
                 device = torch.device(f"cuda:{device_id}")
             else:
-                sys.exit("[Error] GPU requested but not available. Exiting.")
+                sys.exit(1)
         else:
             device = torch.device("cpu")
     else:
@@ -226,6 +226,4 @@ if __name__ == "__main__":
         else:
             device = torch.device("cpu")
 
-    backend = 'nccl' if device.type == 'cuda' else 'gloo'
-
-    run(rank, world_size, args.num_batches, args.batch_size, device, backend)
+    run(rank, world_size, args.num_batches, args.batch_size, device, backend='nccl' if device.type == 'cuda' else 'gloo')
