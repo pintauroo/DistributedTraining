@@ -2,11 +2,17 @@
 
 # Function to display usage information
 usage() {
-    echo "Usage: $0 --nnodes <number_of_nodes> --node_rank <node_rank>"
-    echo "  --nnodes      Number of nodes in the distributed setup (e.g., 2)"
-    echo "  --node_rank   Rank of this node (starting from 0)"
+    echo "Usage: $0 --nnodes <number_of_nodes> --node_rank <node_rank> --master_addr <master_address>"
+    echo "  --nnodes       Number of nodes in the distributed setup (e.g., 2)"
+    echo "  --node_rank    Rank of this node (starting from 0)"
+    echo "  --master_addr  Master node address (e.g., 192.168.1.2)"
     exit 1
 }
+
+# Initialize variables
+NNODES=""
+NODE_RANK=""
+MASTER_ADDR=""
 
 # Parse input arguments
 while [[ "$#" -gt 0 ]]; do
@@ -19,6 +25,10 @@ while [[ "$#" -gt 0 ]]; do
             NODE_RANK="$2"
             shift 2
             ;;
+        --master_addr)
+            MASTER_ADDR="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown parameter passed: $1"
             usage
@@ -26,9 +36,9 @@ while [[ "$#" -gt 0 ]]; do
     esac
 done
 
-# Check if both arguments are provided
-if [ -z "$NNODES" ] || [ -z "$NODE_RANK" ]; then
-    echo "Error: Both --nnodes and --node_rank must be provided."
+# Check if all required arguments are provided
+if [ -z "$NNODES" ] || [ -z "$NODE_RANK" ] || [ -z "$MASTER_ADDR" ]; then
+    echo "Error: --nnodes, --node_rank, and --master_addr must be provided."
     usage
 fi
 
@@ -66,7 +76,7 @@ echo "Using network interface: $IFNAME"
 export TP_SOCKET_IFNAME="$IFNAME"
 export GLOO_SOCKET_IFNAME="$IFNAME"
 export NCCL_SOCKET_IFNAME="$IFNAME"
-export MASTER_ADDR="192.168.1.2"  # You might want to make this configurable as well
+export MASTER_ADDR="$MASTER_ADDR"
 export MASTER_PORT="12355"
 export WORLD_SIZE="$NNODES"
 export RANK="$NODE_RANK"
