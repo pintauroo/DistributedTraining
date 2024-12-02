@@ -1,5 +1,13 @@
 #!/bin/bash
 
+sudo apt update -y
+sudo apt --fix-broken install -y
+sudo apt clean
+sudo apt autoclean
+
+
+sudo apt install python3-pip -y
+
 # Download CUDA repository pin file
 sudo wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin
 sudo mv cuda-ubuntu2204.pin /etc/apt/preferences.d/cuda-repository-pin-600
@@ -37,7 +45,6 @@ sudo chmod a+r /usr/local/cuda-11.8/lib64/libcudnn*
 # nvidia-smi
 # nvcc -V
 
-sudo apt install python3-pip -y
 
 # Install PyTorch with CUDA 11.8 support
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
