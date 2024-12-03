@@ -189,3 +189,8 @@ export WORLD_SIZE=4
 export RANK=2
 torchrun --nproc_per_node=1 --nnodes=4 --node_rank=3 --master_addr="192.168.1.2" --master_port=12355 distributed_parameter_server_reduce_broadcast.py 10000 32 --device gpu --verbose
 
+
+
+
+
+
