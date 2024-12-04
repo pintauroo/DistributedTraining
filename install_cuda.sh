@@ -22,7 +22,7 @@ log() {
 log "Step 1: Checking for NVIDIA GPU..."
 
 if ! command_exists lspci; then
-    log "Error: lspci command not found. Please install pciutils."
+    log "Error: lspci command not found. Installing pciutils..."
     sudo apt-get install -y pciutils
 fi
 
@@ -75,53 +75,18 @@ sudo apt-get install -y linux-headers-$(uname -r)
 log "Kernel headers installation completed."
 
 # ------------------------------
-# Step 6: Add Graphics Drivers PPA
+# Step 6: Install NVIDIA Driver and Components
 # ------------------------------
-log "Step 6: Adding graphics drivers PPA..."
+log "Step 6: Installing NVIDIA driver version 515 and components..."
 
-sudo add-apt-repository -y ppa:graphics-drivers/ppa
-sudo apt-get update -y
+sudo apt-get install -y libnvidia-common-515 libnvidia-gl-515 nvidia-driver-515
 
-log "Graphics drivers PPA added and package lists updated."
-
-# ------------------------------
-# Step 7: Identify and Install the Recommended NVIDIA Driver
-# ------------------------------
-log "Step 7: Identifying the recommended NVIDIA driver..."
-
-if ! command_exists ubuntu-drivers; then
-    log "Error: ubuntu-drivers command not found even after installation. Exiting."
-    exit 1
-fi
-
-RECOMMENDED_DRIVER=$(ubuntu-drivers devices | grep 'recommended' | awk '{print $3}')
-
-if [ -z "$RECOMMENDED_DRIVER" ]; then
-    log "No recommended NVIDIA driver found. Exiting."
-    exit 1
-fi
-
-log "Recommended NVIDIA driver identified: $RECOMMENDED_DRIVER"
-
-log "Installing the recommended NVIDIA driver: $RECOMMENDED_DRIVER..."
-
-sudo apt-get install -y "$RECOMMENDED_DRIVER"
-
-log "NVIDIA driver installation completed."
+log "NVIDIA driver version 515 and components installed successfully."
 
 # ------------------------------
-# Step 8: Install NVIDIA Modprobe
+# Step 7: Blacklist Nouveau Driver (Optional but Recommended)
 # ------------------------------
-log "Step 8: Installing nvidia-modprobe..."
-
-sudo apt-get install -y nvidia-modprobe
-
-log "nvidia-modprobe installation completed."
-
-# ------------------------------
-# Step 9: Blacklist Nouveau Driver (Optional but Recommended)
-# ------------------------------
-log "Step 9: Blacklisting Nouveau driver..."
+log "Step 7: Blacklisting Nouveau driver..."
 
 sudo bash -c "echo 'blacklist nouveau' >> /etc/modprobe.d/blacklist-nouveau.conf"
 sudo bash -c "echo 'options nouveau modeset=0' >> /etc/modprobe.d/blacklist-nouveau.conf"
@@ -130,9 +95,9 @@ sudo update-initramfs -u
 log "Nouveau driver blacklisted."
 
 # ------------------------------
-# Step 10: Reboot System
+# Step 8: Reboot System
 # ------------------------------
-log "Step 10: Rebooting system to load the new NVIDIA driver..."
+log "Step 8: Rebooting system to load the new NVIDIA driver..."
 
-echo "The system will reboot now. After reboot, please run the second script: install_cuda_cudnn_pytorch.sh"
+echo "The system will reboot now. After reboot, ensure the NVIDIA driver is installed properly by running 'nvidia-smi'."
 sudo reboot
