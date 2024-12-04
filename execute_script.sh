@@ -1,18 +1,35 @@
 #!/bin/bash
 
+# ==========================
+# Distributed Training Script
+# ==========================
+
 # Function to display usage information
 usage() {
-    echo "Usage: $0 --nnodes <number_of_nodes> --node_rank <node_rank> --master_addr <master_address>"
+    echo "Usage: $0 --nnodes <number_of_nodes> --node_rank <node_rank> --master_addr <master_address> [--epochs <epochs>] [--batch_size <batch_size>] [--device <device>]"
+    echo ""
+    echo "Required Arguments:"
     echo "  --nnodes       Number of nodes in the distributed setup (e.g., 2)"
     echo "  --node_rank    Rank of this node (starting from 0)"
     echo "  --master_addr  Master node address (e.g., 192.168.1.2)"
+    echo ""
+    echo "Optional Arguments:"
+    echo "  --epochs       Number of training epochs (default: 100)"
+    echo "  --batch_size   Size of each training batch (default: 32)"
+    echo "  --device       Device to use for training (e.g., cpu, gpu; default: gpu)"
+    echo ""
+    echo "Example:"
+    echo "  $0 --nnodes 2 --node_rank 0 --master_addr 192.168.1.1 --epochs 50 --batch_size 64 --device cpu"
     exit 1
 }
 
-# Initialize variables
+# Initialize variables with default values
 NNODES=""
 NODE_RANK=""
 MASTER_ADDR=""
+EPOCHS=100          # Default epochs
+BATCH_SIZE=32       # Default batch size
+DEVICE="gpu"        # Default device
 
 # Parse input arguments
 while [[ "$#" -gt 0 ]]; do
@@ -27,6 +44,18 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         --master_addr)
             MASTER_ADDR="$2"
+            shift 2
+            ;;
+        --epochs)
+            EPOCHS="$2"
+            shift 2
+            ;;
+        --batch_size)
+            BATCH_SIZE="$2"
+            shift 2
+            ;;
+        --device)
+            DEVICE="$2"
             shift 2
             ;;
         *)
@@ -51,6 +80,24 @@ fi
 # Validate that NODE_RANK is a non-negative integer and less than NNODES
 if ! [[ "$NODE_RANK" =~ ^[0-9]+$ ]] || [ "$NODE_RANK" -ge "$NNODES" ]; then
     echo "Error: --node_rank must be a non-negative integer less than --nnodes."
+    exit 1
+fi
+
+# Validate that EPOCHS is a positive integer
+if ! [[ "$EPOCHS" =~ ^[0-9]+$ ]] || [ "$EPOCHS" -lt 1 ]; then
+    echo "Error: --epochs must be a positive integer."
+    exit 1
+fi
+
+# Validate that BATCH_SIZE is a positive integer
+if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ]; then
+    echo "Error: --batch_size must be a positive integer."
+    exit 1
+fi
+
+# Validate that DEVICE is either 'cpu' or 'gpu'
+if ! [[ "$DEVICE" =~ ^(cpu|gpu)$ ]]; then
+    echo "Error: --device must be either 'cpu' or 'gpu'."
     exit 1
 fi
 
@@ -95,6 +142,18 @@ echo "RANK=$RANK"
 echo "NCCL_DEBUG=$NCCL_DEBUG"
 echo "NCCL_IB_DISABLE=$NCCL_IB_DISABLE"
 
+# Determine the directory where the script resides
+SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
+# Path to the Python script
+PYTHON_SCRIPT="$SCRIPT_DIR/distributed_parameter_server_clean.py"
+
+# Check if the Python script exists
+if [ ! -f "$PYTHON_SCRIPT" ]; then
+    echo "Error: Python script not found at $PYTHON_SCRIPT"
+    exit 1
+fi
+
 # Execute the torchrun command
 torchrun \
     --nproc_per_node=1 \
@@ -102,6 +161,6 @@ torchrun \
     --node_rank="$NODE_RANK" \
     --master_addr="$MASTER_ADDR" \
     --master_port="$MASTER_PORT" \
-    distributed_parameter_server.py 100 32 \
-    --device gpu \
+    "$PYTHON_SCRIPT" "$EPOCHS" "$BATCH_SIZE" \
+    --device "$DEVICE" \
     --verbose
