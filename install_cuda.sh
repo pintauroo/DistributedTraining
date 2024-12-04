@@ -77,11 +77,11 @@ log "Kernel headers installation completed."
 # ------------------------------
 # Step 6: Install NVIDIA Driver and Components
 # ------------------------------
-log "Step 6: Installing NVIDIA driver version 515 and components..."
+log "Step 6: Installing NVIDIA driver version 535-server and components..."
 
-sudo apt-get install -y libnvidia-common-515 libnvidia-gl-515 nvidia-driver-515
+sudo apt-get install -y nvidia-driver-535-server
 
-log "NVIDIA driver version 515 and components installed successfully."
+log "NVIDIA driver version 535-server installed successfully."
 
 # ------------------------------
 # Step 7: Blacklist Nouveau Driver (Optional but Recommended)
