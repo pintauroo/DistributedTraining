@@ -104,4 +104,4 @@ torchrun \
     --master_port="$MASTER_PORT" \
     distributed_parameter_server_clean.py 1000 32 \
     --device gpu \
-    --verbose
+    # --verbose
