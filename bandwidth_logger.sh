@@ -100,23 +100,21 @@ while true; do
 
     TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
-    # Capture bandwidth usage using ifstat
-    # The -i flag specifies the interface, the 1 1 at the end sets a single interval of 1 second
-    # The -b flag outputs bytes per second; using -k for Kbps
-    # Adjust according to your ifstat version and preferred units
-    OUTPUT=$(ifstat -i "$INTERFACE" 1 1 | awk 'NR==3 {print $1","$2}')
+    # Capture bandwidth usage using ifstat with -n for bits per second
+    # The -n flag ensures the output is in bits per second
+    OUTPUT=$(ifstat -i "$INTERFACE" -n 1 1 | awk 'NR==3 {print $1","$2}')
 
     # Check if OUTPUT is not empty
     if [ -n "$OUTPUT" ]; then
-        # Convert Kbps to Gbps by dividing by 1,000,000
-        RX_KBPS=$(echo "$OUTPUT" | cut -d',' -f1)
-        TX_KBPS=$(echo "$OUTPUT" | cut -d',' -f2)
+        # Convert bps to Gbps by dividing by 1,000,000,000
+        RX_bps=$(echo "$OUTPUT" | cut -d',' -f1)
+        TX_bps=$(echo "$OUTPUT" | cut -d',' -f2)
 
         # Handle cases where ifstat outputs '-' or other non-numeric values
-        if [[ "$RX_KBPS" =~ ^[0-9.]+$ ]] && [[ "$TX_KBPS" =~ ^[0-9.]+$ ]]; then
-            RX_GBPS=$(awk "BEGIN {printf \"%.6f\", $RX_KBPS/1000000}")
-            TX_GBPS=$(awk "BEGIN {printf \"%.6f\", $TX_KBPS/1000000}")
-            echo "$TIMESTAMP,$RX_GBPS,$TX_GBPS" | sudo tee -a "$OUTPUT_FILE" > /dev/null
+        if [[ "$RX_bps" =~ ^[0-9.]+$ ]] && [[ "$TX_bps" =~ ^[0-9.]+$ ]]; then
+            RX_Gbps=$(awk "BEGIN {printf \"%.6f\", $RX_bps/1000000000}")
+            TX_Gbps=$(awk "BEGIN {printf \"%.6f\", $TX_bps/1000000000}")
+            echo "$TIMESTAMP,$RX_Gbps,$TX_Gbps" | sudo tee -a "$OUTPUT_FILE" > /dev/null
         else
             echo "$TIMESTAMP,ERROR,ERROR" | sudo tee -a "$OUTPUT_FILE" > /dev/null
         fi
