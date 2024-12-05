@@ -19,7 +19,8 @@ sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda
 sudo add-apt-repository -y "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /"
 
 # Update and upgrade packages
-sudo apt update -y && sudo apt upgrade -y
+# sudo apt update -y && sudo apt upgrade -y
+sudo apt update -y
 
 # Install CUDA 11.8
 sudo apt install -y cuda-11-8
