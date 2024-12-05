@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # bandwidth_logger.sh
-# Logs bandwidth usage of a specified network interface to a CSV file.
+# Logs bandwidth usage of a specified network interface to a CSV file in Gbps every second.
 
 # Function to display usage information
 usage() {
@@ -17,7 +17,7 @@ usage() {
 # Default configuration
 INTERFACE="enp7s0"
 OUTPUT_FILE="/var/log/bandwidth_usage.csv"
-INTERVAL=5          # Interval in seconds between measurements
+INTERVAL=1          # Interval in seconds between measurements
 DURATION=0          # Total recording time in seconds (0 means run indefinitely)
 
 # Parse command-line arguments
@@ -78,31 +78,48 @@ prepare_output_file
 
 # Initialize CSV file with headers if it doesn't exist
 if [ ! -f "$OUTPUT_FILE" ]; then
-    echo "timestamp,rx_kbps,tx_kbps" | sudo tee "$OUTPUT_FILE" > /dev/null
+    echo "timestamp,rx_gbps,tx_gbps" | sudo tee "$OUTPUT_FILE" > /dev/null
 fi
 
 # Calculate the end time if duration is specified
 if [ "$DURATION" -gt 0 ]; then
-    END_TIME=$((SECONDS + DURATION))
+    START_TIME=$(date +%s)
+    END_TIME=$((START_TIME + DURATION))
 fi
 
 # Infinite loop to log bandwidth usage
 while true; do
     # If duration is set and current time exceeds end time, exit
-    if [ "$DURATION" -gt 0 ] && [ "$SECONDS" -ge "$END_TIME" ]; then
-        echo "Recording duration of $DURATION seconds completed. Exiting."
-        exit 0
+    if [ "$DURATION" -gt 0 ]; then
+        CURRENT_TIME=$(date +%s)
+        if [ "$CURRENT_TIME" -ge "$END_TIME" ]; then
+            echo "Recording duration of $DURATION seconds completed. Exiting."
+            exit 0
+        fi
     fi
 
     TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
     # Capture bandwidth usage using ifstat
-    # The -i flag specifies the interface, the 1 1 at the end sets a single interval
+    # The -i flag specifies the interface, the 1 1 at the end sets a single interval of 1 second
+    # The -b flag outputs bytes per second; using -k for Kbps
+    # Adjust according to your ifstat version and preferred units
     OUTPUT=$(ifstat -i "$INTERFACE" 1 1 | awk 'NR==3 {print $1","$2}')
 
     # Check if OUTPUT is not empty
     if [ -n "$OUTPUT" ]; then
-        echo "$TIMESTAMP,$OUTPUT" | sudo tee -a "$OUTPUT_FILE" > /dev/null
+        # Convert Kbps to Gbps by dividing by 1,000,000
+        RX_KBPS=$(echo "$OUTPUT" | cut -d',' -f1)
+        TX_KBPS=$(echo "$OUTPUT" | cut -d',' -f2)
+
+        # Handle cases where ifstat outputs '-' or other non-numeric values
+        if [[ "$RX_KBPS" =~ ^[0-9.]+$ ]] && [[ "$TX_KBPS" =~ ^[0-9.]+$ ]]; then
+            RX_GBPS=$(awk "BEGIN {printf \"%.6f\", $RX_KBPS/1000000}")
+            TX_GBPS=$(awk "BEGIN {printf \"%.6f\", $TX_KBPS/1000000}")
+            echo "$TIMESTAMP,$RX_GBPS,$TX_GBPS" | sudo tee -a "$OUTPUT_FILE" > /dev/null
+        else
+            echo "$TIMESTAMP,ERROR,ERROR" | sudo tee -a "$OUTPUT_FILE" > /dev/null
+        fi
     else
         echo "$TIMESTAMP,ERROR,ERROR" | sudo tee -a "$OUTPUT_FILE" > /dev/null
     fi
