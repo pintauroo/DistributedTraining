@@ -87,6 +87,11 @@ if [ "$DURATION" -gt 0 ]; then
     END_TIME=$((START_TIME + DURATION))
 fi
 
+# Get initial counters
+rx_bytes_old=$(cat /sys/class/net/"$INTERFACE"/statistics/rx_bytes)
+tx_bytes_old=$(cat /sys/class/net/"$INTERFACE"/statistics/tx_bytes)
+time_old=$(date +%s.%N)
+
 # Infinite loop to log bandwidth usage
 while true; do
     # If duration is set and current time exceeds end time, exit
@@ -98,30 +103,35 @@ while true; do
         fi
     fi
 
+    # Wait for the specified interval
+    sleep "$INTERVAL"
+
     TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
-    # Capture bandwidth usage using ifstat with -n for bits per second
-    # The -n flag ensures the output is in bits per second
-    OUTPUT=$(ifstat -i "$INTERFACE" -n 1 1 | awk 'NR==3 {print $1","$2}')
+    # Get current counters
+    rx_bytes_new=$(cat /sys/class/net/"$INTERFACE"/statistics/rx_bytes)
+    tx_bytes_new=$(cat /sys/class/net/"$INTERFACE"/statistics/tx_bytes)
+    time_new=$(date +%s.%N)
 
-    # Check if OUTPUT is not empty
-    if [ -n "$OUTPUT" ]; then
-        # Convert bps to Gbps by dividing by 1,000,000,000
-        RX_bps=$(echo "$OUTPUT" | cut -d',' -f1)
-        TX_bps=$(echo "$OUTPUT" | cut -d',' -f2)
+    # Calculate time difference
+    time_diff=$(echo "$time_new - $time_old" | bc)
 
-        # Handle cases where ifstat outputs '-' or other non-numeric values
-        if [[ "$RX_bps" =~ ^[0-9.]+$ ]] && [[ "$TX_bps" =~ ^[0-9.]+$ ]]; then
-            RX_Gbps=$(awk "BEGIN {printf \"%.6f\", $RX_bps/1000000000}")
-            TX_Gbps=$(awk "BEGIN {printf \"%.6f\", $TX_bps/1000000000}")
-            echo "$TIMESTAMP,$RX_Gbps,$TX_Gbps" | sudo tee -a "$OUTPUT_FILE" > /dev/null
-        else
-            echo "$TIMESTAMP,ERROR,ERROR" | sudo tee -a "$OUTPUT_FILE" > /dev/null
-        fi
-    else
-        echo "$TIMESTAMP,ERROR,ERROR" | sudo tee -a "$OUTPUT_FILE" > /dev/null
-    fi
+    # Calculate bytes per second
+    rx_bps=$(echo "($rx_bytes_new - $rx_bytes_old) / $time_diff" | bc -l)
+    tx_bps=$(echo "($tx_bytes_new - $tx_bytes_old) / $time_diff" | bc -l)
 
-    # Wait for the specified interval before next measurement
-    sleep "$INTERVAL"
+    # Convert bytes per second to Gbps (bytes * 8 to get bits)
+    rx_gbps=$(echo "$rx_bps * 8 / 1000000000" | bc -l)
+    tx_gbps=$(echo "$tx_bps * 8 / 1000000000" | bc -l)
+
+    # Format to 6 decimal places
+    rx_gbps=$(printf "%.6f" "$rx_gbps")
+    tx_gbps=$(printf "%.6f" "$tx_gbps")
+
+    echo "$TIMESTAMP,$rx_gbps,$tx_gbps" | sudo tee -a "$OUTPUT_FILE" > /dev/null
+
+    # Update old values
+    rx_bytes_old=$rx_bytes_new
+    tx_bytes_old=$tx_bytes_new
+    time_old=$time_new
 done
