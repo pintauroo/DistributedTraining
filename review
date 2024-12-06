@@ -59,17 +59,6 @@ Reference
 --What is a node bundle? In general, the bidding procedure is not described well, so it was difficult for me to understand how Plebiscito actually works.
 
 
-
-
-
-
-
-
-
-
-
-
-
 The evaluation does not seem to include the time for Plebiscito to reach an allocation solution, which is important since this is about distributed vs. centralized approaches. Instead, it mostly seems to show that (i) considering network bandwidth is important in node allocation; and (ii) Plebiscito can reproduce centralized allocations even though it is distributed.
 
 It's not clear how Plebiscito could affect metrics like fairness, which are not evaluated. Does Plebiscito successfully find a fair solution when the utility functions in Eq. (3)’s objective are designed to optimize fairness (e.g., by using the log utility instead of utility of each job)?
