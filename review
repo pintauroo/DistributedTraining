@@ -1,0 +1,79 @@
+
+Although the authors tried hard to put forward an integrated design, I still think the paper is not ready to be accepted:
+
+- Resource placement/assignment problem is a classic problem in cloud computing which has been studied extensively in the last decade. From the perspectives of formulation and solution (maximum coverage problem --> standard 1-1/e approximation ratio --> distributed auction algorithm) -- I do not see much novelty there in the solution part. The main description of the solution seems independent of the problem context that I gain little knowledge about the actual problem to be tackled by reading through Section IV.
+
+
+
+- The reference is way to old. For example, The RAFT scheme being compared with was published in 2014 and [6] was published in 2011. The bandwidth problem, especially in LLM training has a large number of contemporary works on INFOCOM/NSDI/SIGCOMM that can be at least cited.
+
+- The evaluation section is disorganized: 1) It is unclear what is the experimental setting; 2) What are the benchmarks? It seems different benchmarks are being used in different subsections of the evaluation; 3) What are the metrics to evaluate? 4) Any description on the dataset/trace being used? 5) After reading, I don't see much insight from the evaluation. 6) It seems the paper has designed and implemented the system from Fig. 3 and the implementation of the protocol in Fig. 4. Then how it interplays with trace, more explanations are needed.
+
+
+
+
+
+The paper could be improved by given a more specific technical presentation/formulation on the key problem to be tackled and comparing with more recent SOTA schemes.
+
+
+
+
+
+
+22222222222222222222
+
+- The paper considers PS-based architecture, which is somehow out-of-date. PS-based architecture is used for data parallesim in early days.
+
+
+
+- The paper’s experiments miss a comparison with state-of-the-art task scheduling and allocation algorithms, such as CASSINI [1]. For bandwidth-sensitive algorithms, how do the frequency and amplitude of bandwidth variations impact performance? Additionally, what are the convergence time overheads for the algorithm?
+
+
+
+-Most of the experiments in the paper are conducted using a Simulator, yet there is limited discussion on the simulator’s accuracy. The authors should have included results from at least small clusters to validate the accuracy of the simulator.
+
+
+
+
+It would be good to clearly explain the differences and advantages of Plebiscito in task scheduling and allocation in the introduction. Additionally, the paper should have included comparisons with other network-aware scheduling methods and auction-based scheduling methods, such as Themis [2].
+
+The training jobs in the paper use the PS architecture. Given that many AI clusters now employ the AllReduce architecture to optimize bandwidth utilization between nodes, the reviewer is interested in whether the proposed method can be adapted for the AllReduce architecture to broaden its applicability.
+
+The experiment would be clearer and easier to understand if the objectives of the experimental test (Allocation, Preemption, Scheduling) and the corresponding Baseline are stated first.
+
+Reference
+[1] Rajasekaran, Sudarsanan, Manya Ghobadi, and Aditya Akella. "{CASSINI}:{Network-Aware} Job Scheduling in Machine Learning Clusters." 21st USENIX Symposium on Networked Systems Design and Implementation (NSDI 24). 2024.
+[2] Mahajan, Kshiteej, et al. "Themis: Fair and efficient {GPU} cluster scheduling." 17th USENIX Symposium on Networked Systems Design and Implementation (NSDI 20). 2020.
+
+
+
+
+
+
+3333333333333333333333333
+
+--There is a vast amount of literature on cluster resource allocation for distributed workloads, e.g., with Wang et al. authoring a survey in IEEE Communication Surveys and Tutorials six years ago, in 2018. Much of this literature explicitly optimizes over network bandwidth (e.g., coflow scheduling has been widely considered), so it is surprising that Plebiscito is not compared to some of those network-aware solutions. It is possible that the distributed protocol proposed here (and not the utility maximization problem) is novel, but the manuscript should include explicit comparisons to more of the related papers in the literature, instead of just focusing on the most well-known solutions
+
+--The connection between the node bidding procedure and Eq. (3-7)’s optimization problem is not described well. Is the idea that the nodes can implicitly solve this optimization problem through the bidding procedure? It’s not clear how the constraints are guaranteed to be satisfied with this approach. 
+
+--What is a node bundle? In general, the bidding procedure is not described well, so it was difficult for me to understand how Plebiscito actually works.
+
+
+
+
+
+
+
+
+
+
+
+
+
+The evaluation does not seem to include the time for Plebiscito to reach an allocation solution, which is important since this is about distributed vs. centralized approaches. Instead, it mostly seems to show that (i) considering network bandwidth is important in node allocation; and (ii) Plebiscito can reproduce centralized allocations even though it is distributed.
+
+It's not clear how Plebiscito could affect metrics like fairness, which are not evaluated. Does Plebiscito successfully find a fair solution when the utility functions in Eq. (3)’s objective are designed to optimize fairness (e.g., by using the log utility instead of utility of each job)?
+
+.Is Plebiscito designed only for machine learning training jobs? Or can it be used for distributed workloads in general?
+
+The evaluation for different types of GPUs was interesting in allowing some GPU types to substitute, at some performance cost, for others. However, it seems like this could easily be incorporated into Eq. (3-7)’s optimization problem by simply viewing different GPU types as different types of computing resources.
