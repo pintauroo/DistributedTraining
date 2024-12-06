@@ -126,6 +126,6 @@ torchrun \
     --node_rank="$NODE_RANK" \
     --master_addr="$MASTER_ADDR" \
     --master_port="$MASTER_PORT" \
-    distributed_parameter_server_clean.py "$EPOCHS" "$BATCH_SIZE" \
-    --device gpu
-    # --verbose
+    distributed_parameter_server.py "$EPOCHS" "$BATCH_SIZE" \
+    --device gpu \
+    --verbose
