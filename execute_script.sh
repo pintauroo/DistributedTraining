@@ -17,6 +17,7 @@ NODE_RANK=""
 MASTER_ADDR=""
 EPOCHS=""
 BATCH_SIZE=""
+TORCHRUN_PATH="/home/ubuntu/.local/bin/torchrun"
 
 # Parse input arguments
 while [[ "$#" -gt 0 ]]; do
@@ -120,7 +121,7 @@ echo "NCCL_DEBUG=$NCCL_DEBUG"
 echo "NCCL_IB_DISABLE=$NCCL_IB_DISABLE"
 
 # Execute the torchrun command with the specified epochs and batch size
-torchrun \
+$TORCHRUN_PATH \
     --nproc_per_node=1 \
     --nnodes="$NNODES" \
     --node_rank="$NODE_RANK" \
