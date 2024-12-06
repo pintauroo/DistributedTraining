@@ -127,4 +127,3 @@ torchrun \
     --master_addr="$MASTER_ADDR" \
     --master_port="$MASTER_PORT" \
     distributed_training.py "$EPOCHS" "$BATCH_SIZE" \
-    --device gpu
