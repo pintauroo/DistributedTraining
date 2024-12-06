@@ -293,10 +293,8 @@ def worker(rank, size, num_batches, batch_size, device, backend: str):
 # ------------------------- Run Function -------------------------
 def run(rank, size, num_batches, batch_size, device, backend: str):
     if rank == 0:
-        # Parameter Server can run on CPU or GPU based on the device argument
         parameter_server(rank, size, num_batches, device, backend)
     else:
-        # Workers can run on CPU or GPU based on the device argument
         worker(rank, size, num_batches, batch_size, device, backend)
 
 # ------------------------ Main Execution ------------------------
@@ -316,9 +314,9 @@ if __name__ == "__main__":
     if args.device:
         if args.device == "gpu":
             if torch.cuda.is_available():
-                # Assign specific GPU based on rank to avoid conflicts
-                device_id = rank % torch.cuda.device_count()
-                device = torch.device(f"cuda:{device_id}")
+                # All nodes have one GPU, always use GPU 0
+                torch.cuda.set_device(0)
+                device = torch.device("cuda:0")
             else:
                 sys.exit("[Error] GPU requested but not available. Exiting.")
         else:
@@ -326,8 +324,8 @@ if __name__ == "__main__":
     else:
         # Auto-select device: GPU if available, else CPU
         if torch.cuda.is_available():
-            device_id = rank % torch.cuda.device_count()
-            device = torch.device(f"cuda:{device_id}")
+            torch.cuda.set_device(0)
+            device = torch.device("cuda:0")
         else:
             device = torch.device("cpu")
 
