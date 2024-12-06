@@ -1,13 +1,12 @@
 import sys
 import os
 import argparse
+import datetime
 import torch
 import torch.distributed as dist
 from torch import nn, optim
 from torch.utils.data import DataLoader, DistributedSampler
 from torchvision import datasets, transforms
-import datetime
-import time
 
 def flatten_tensors(tensors):
     return torch.cat([t.contiguous().view(-1) for t in tensors])
@@ -56,39 +55,35 @@ def parameter_server(rank, size, num_batches, device, backend):
     optimizer = optim.SGD(model.parameters(), lr=0.01)
     world_size_workers = size - 1
 
-    param_tensors = [param.data for param in model.parameters()]
-    param_shapes = [param.data.shape for param in model.parameters()]
-    param_flat = flatten_tensors(param_tensors).to(device)
+    param_shapes = [p.data.shape for p in model.parameters()]
+    param_flat = flatten_tensors([p.data for p in model.parameters()]).to(device)
 
-    dist.barrier()
+    dist.barrier(device_ids=[device.index])
 
-    for batch_idx in range(num_batches):
-        # Send parameters to workers
+    for _ in range(num_batches):
+        # Send parameters
         for worker_rank in range(1, size):
             dist.send(tensor=param_flat, dst=worker_rank)
 
-        # Receive gradients from workers and sum them
+        # Receive and aggregate gradients
         grad_flat = torch.zeros_like(param_flat, device=device)
         for worker_rank in range(1, size):
             worker_grad_flat = torch.zeros_like(param_flat, device=device)
             dist.recv(tensor=worker_grad_flat, src=worker_rank)
             grad_flat += worker_grad_flat
 
-        # Average gradients
         grad_flat /= world_size_workers
 
-        # Set gradients and step
+        # Apply gradients
         unflattened_grads = unflatten_tensors(grad_flat, param_shapes)
         for param, grad in zip(model.parameters(), unflattened_grads):
             param.grad = grad
         optimizer.step()
         optimizer.zero_grad()
 
-        # Update param_flat
-        param_tensors = [param.data for param in model.parameters()]
-        param_flat = flatten_tensors(param_tensors).to(device)
+        param_flat = flatten_tensors([p.data for p in model.parameters()]).to(device)
 
-    dist.barrier()
+    dist.barrier(device_ids=[device.index])
     dist.destroy_process_group()
 
 def worker(rank, size, num_batches, batch_size, device, backend):
@@ -110,18 +105,16 @@ def worker(rank, size, num_batches, batch_size, device, backend):
     data_iter = iter(data_loader)
 
     model = Net().to(device)
-    param_tensors = [param.data for param in model.parameters()]
-    param_shapes = [param.data.shape for param in model.parameters()]
+    param_shapes = [p.data.shape for p in model.parameters()]
     total_params = sum(p.numel() for p in model.parameters())
     param_flat = torch.zeros(total_params, device=device)
 
-    dist.barrier()
+    dist.barrier(device_ids=[device.index])
 
-    for batch_idx in range(num_batches):
-        # Receive parameters
+    for _ in range(num_batches):
         dist.recv(tensor=param_flat, src=0)
 
-        # Unflatten and update model parameters
+        # Set parameters
         unflattened_params = unflatten_tensors(param_flat, param_shapes)
         for param, new_data in zip(model.parameters(), unflattened_params):
             param.data.copy_(new_data)
@@ -140,22 +133,29 @@ def worker(rank, size, num_batches, batch_size, device, backend):
 
         grad_tensors = [param.grad for param in model.parameters()]
         grad_flat = flatten_tensors(grad_tensors).to(device)
-
-        # Send gradients
         dist.send(tensor=grad_flat, dst=0)
 
-    dist.barrier()
+    dist.barrier(device_ids=[device.index])
     dist.destroy_process_group()
 
-def run(rank, size, num_batches, batch_size, device):
+def run(rank, size, num_batches, batch_size):
+    # Set device
+    if torch.cuda.is_available():
+        device_id = rank % torch.cuda.device_count()
+        torch.cuda.set_device(device_id)
+        device = torch.device(f"cuda:{device_id}")
+    else:
+        device = torch.device("cpu")
+
     backend = 'nccl' if device.type == 'cuda' else 'gloo'
+
     if rank == 0:
         parameter_server(rank, size, num_batches, device, backend)
     else:
         worker(rank, size, num_batches, batch_size, device, backend)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Distributed Parameter Server Training (Simplified)")
+    parser = argparse.ArgumentParser(description="Minimal Distributed Parameter Server Example")
     parser.add_argument("num_batches", type=int, help="Number of batches to process")
     parser.add_argument("batch_size", type=int, help="Batch size for DataLoader")
     args = parser.parse_args()
@@ -163,10 +163,4 @@ if __name__ == "__main__":
     world_size = int(os.environ.get('WORLD_SIZE', 1))
     rank = int(os.environ.get('RANK', 0))
 
-    if torch.cuda.is_available():
-        device_id = rank % torch.cuda.device_count()
-        device = torch.device(f"cuda:{device_id}")
-    else:
-        device = torch.device("cpu")
-
-    run(rank, world_size, args.num_batches, args.batch_size, device)
+    run(rank, world_size, args.num_batches, args.batch_size)
