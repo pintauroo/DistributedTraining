@@ -83,7 +83,7 @@ fi
 get_interface() {
     # Use 'ip' to list all IPv4 addresses and filter for 192.168.1.x
     local interface
-    interface=$(ip -o -4 addr list | awk '/192\.168\.1\./ {print $2}' | uniq)
+    interface=$(ip -o -4 addr list | awk '/192\.168\./ {print $2}' | uniq | head -n 1)
 
     if [ -z "$interface" ]; then
         echo "Error: No network interface found with IP in the range 192.168.1.x"
