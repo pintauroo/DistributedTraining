@@ -46,6 +46,10 @@ class Net(nn.Module):
         x = self.fc2(x)
         return x
 
+def log_row(row):
+    with open(RESULTS_FILE, 'a', newline='') as f:
+        csv.writer(f).writerow(row)
+
 def parameter_server(rank, size, num_batches, device, backend):
     dist.init_process_group(
         backend=backend,
@@ -55,6 +59,15 @@ def parameter_server(rank, size, num_batches, device, backend):
         timeout=datetime.timedelta(seconds=300)
     )
 
+    # write header once
+    if rank == 0:
+        with open(RESULTS_FILE, 'w', newline='') as f:
+            csv.writer(f).writerow([
+                'rank','round','phase',
+                'ts_start','ts_end','duration_s',
+                'bytes','throughput_MBps','loss'
+            ])
+
     model = Net().to(device)
     optimizer = optim.SGD(model.parameters(), lr=0.01)
     workers = size - 1
@@ -63,28 +76,46 @@ def parameter_server(rank, size, num_batches, device, backend):
     param_flat = flatten_tensors([p.data for p in model.parameters()]).to(device)
 
     dist.barrier(device_ids=[device.index])
-    for _ in range(num_batches):
-        # SEND
+
+    for rnd in range(num_batches):
+        # PS → workers
+        ts0 = datetime.datetime.now().isoformat()
+        t0  = time.perf_counter()
         for w in range(1, size):
             dist.send(tensor=param_flat, dst=w)
+        t1  = time.perf_counter()
+        ts1 = datetime.datetime.now().isoformat()
+        bytes_sent = param_flat.numel() * param_flat.element_size() * workers
+        thr_send   = (bytes_sent / (t1 - t0)) / (1024**2)
+        log_row([0, rnd, 'ps_send', ts0, ts1, f"{t1-t0:.6f}", bytes_sent, f"{thr_send:.2f}", ''])
 
-        # RECV & AGGREGATE
-        agg_grad = torch.zeros_like(param_flat, device=device)
+        # workers → PS
+        ts0 = datetime.datetime.now().isoformat()
+        t2  = time.perf_counter()
+        agg_flat = torch.zeros_like(param_flat, device=device)
         for w in range(1, size):
             buf = torch.zeros_like(param_flat, device=device)
             dist.recv(tensor=buf, src=w)
-            agg_grad += buf
-        agg_grad /= workers
+            agg_flat += buf
+        t3  = time.perf_counter()
+        ts1 = datetime.datetime.now().isoformat()
+        bytes_recv = param_flat.numel() * param_flat.element_size() * workers
+        thr_recv   = (bytes_recv / (t3 - t2)) / (1024**2)
+        log_row([0, rnd, 'ps_recv', ts0, ts1, f"{t3-t2:.6f}", bytes_recv, f"{thr_recv:.2f}", ''])
 
-        # APPLY
-        grads = unflatten_tensors(agg_grad, shapes)
+        # update
+        ts0 = datetime.datetime.now().isoformat()
+        t4  = time.perf_counter()
+        agg_flat /= workers
+        grads = unflatten_tensors(agg_flat, shapes)
         for p, g in zip(model.parameters(), grads):
             p.grad = g
         optimizer.step()
         optimizer.zero_grad()
-
-        # REFRESH FLAT PARAMS
         param_flat = flatten_tensors([p.data for p in model.parameters()]).to(device)
+        t5  = time.perf_counter()
+        ts1 = datetime.datetime.now().isoformat()
+        log_row([0, rnd, 'ps_update', ts0, ts1, f"{t5-t4:.6f}", '', '', ''])
 
     dist.barrier(device_ids=[device.index])
     dist.destroy_process_group()
@@ -98,7 +129,7 @@ def worker(rank, size, num_batches, batch_size, device, backend):
         timeout=datetime.timedelta(seconds=300)
     )
 
-    # DATASET
+    # dataset & loader
     tf = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
@@ -109,47 +140,30 @@ def worker(rank, size, num_batches, batch_size, device, backend):
                          pin_memory=(device.type=='cuda'))
     it = iter(loader)
 
-    # MODEL
-    model = Net().to(device)
-    shapes = [p.data.shape for p in model.parameters()]
+    model        = Net().to(device)
+    shapes       = [p.data.shape for p in model.parameters()]
     total_params = sum(p.numel() for p in model.parameters())
     param_flat   = torch.zeros(total_params, device=device)
 
-    # CSV HEADER (overwrite per worker)
-    if rank != 0:
-        with open(RESULTS_FILE, 'w', newline='') as f:
-            csv.writer(f).writerow([
-                'rank','round','batch_size',
-                'recv_bytes','recv_MBps',
-                'send_bytes','send_MBps',
-                'train_time','loss'
-            ])
-
     dist.barrier(device_ids=[device.index])
 
-    # ACCUMULATORS
-    tot_recv_bytes = 0
-    tot_send_bytes = 0
-    sum_recv_time  = 0.0
-    sum_send_time  = 0.0
-
     for rnd in range(num_batches):
-        # RECV PARAMS
-        t0 = time.perf_counter()
+        # PS → worker
+        ts0 = datetime.datetime.now().isoformat()
+        t0  = time.perf_counter()
         dist.recv(tensor=param_flat, src=0)
-        t1 = time.perf_counter()
-        rtime = t1 - t0
-        rbytes = param_flat.numel() * param_flat.element_size()
-        rmbps  = (rbytes / rtime) / (1024**2)
-        tot_recv_bytes += rbytes
-        sum_recv_time  += rtime
+        t1  = time.perf_counter()
+        ts1 = datetime.datetime.now().isoformat()
+        bytes_recv = param_flat.numel() * param_flat.element_size()
+        thr_recv   = (bytes_recv / (t1 - t0)) / (1024**2)
+        log_row([rank, rnd, 'worker_recv', ts0, ts1, f"{t1-t0:.6f}", bytes_recv, f"{thr_recv:.2f}", ''])
 
-        # LOAD INTO MODEL
+        # load into model
         new_ws = unflatten_tensors(param_flat, shapes)
         for p, w in zip(model.parameters(), new_ws):
             p.data.copy_(w)
 
-        # TRAIN STEP
+        # training
         try:
             data, target = next(it)
         except StopIteration:
@@ -157,51 +171,28 @@ def worker(rank, size, num_batches, batch_size, device, backend):
             data, target = next(it)
         data, target = data.to(device), target.to(device)
 
-        model.zero_grad()
-        t2 = time.perf_counter()
-        out = model(data)
+        ts0 = datetime.datetime.now().isoformat()
+        t2  = time.perf_counter()
+        out  = model(data)
         loss = nn.functional.cross_entropy(out, target)
         loss.backward()
-        t3 = time.perf_counter()
-        tt = t3 - t2
+        t3  = time.perf_counter()
+        ts1 = datetime.datetime.now().isoformat()
+        log_row([rank, rnd, 'worker_train', ts0, ts1, f"{t3-t2:.6f}", '', '', f"{loss.item():.6f}"])
 
-        # SEND GRADIENTS
-        t4 = time.perf_counter()
+        # worker → PS
         grad_flat = flatten_tensors([p.grad for p in model.parameters()]).to(device)
+        ts0 = datetime.datetime.now().isoformat()
+        t4  = time.perf_counter()
         dist.send(tensor=grad_flat, dst=0)
-        t5 = time.perf_counter()
-        st = t5 - t4
-        sbytes = grad_flat.numel() * grad_flat.element_size()
-        smbps  = (sbytes / st) / (1024**2)
-        tot_send_bytes += sbytes
-        sum_send_time  += st
-
-        # LOG ROW
-        with open(RESULTS_FILE, 'a', newline='') as f:
-            csv.writer(f).writerow([
-                rank, rnd, batch_size,
-                rbytes, f"{rmbps:.2f}",
-                sbytes, f"{smbps:.2f}",
-                f"{tt:.4f}",
-                loss.item()
-            ])
+        t5  = time.perf_counter()
+        ts1 = datetime.datetime.now().isoformat()
+        bytes_sent = grad_flat.numel() * grad_flat.element_size()
+        thr_send   = (bytes_sent / (t5 - t4)) / (1024**2)
+        log_row([rank, rnd, 'worker_send', ts0, ts1, f"{t5-t4:.6f}", bytes_sent, f"{thr_send:.2f}", ''])
 
     dist.barrier(device_ids=[device.index])
     dist.destroy_process_group()
-
-    # SUMMARY
-    avg_rmb = (tot_recv_bytes / sum_recv_time) / (1024**2)
-    avg_smb = (tot_send_bytes / sum_send_time) / (1024**2)
-    with open(RESULTS_FILE, 'a', newline='') as f:
-        csv.writer(f).writerow([])
-        csv.writer(f).writerow([
-            f"worker {rank} SUMMARY", '', batch_size,
-            f"total_recv={tot_recv_bytes}B",
-            f"avg_recv={avg_rmb:.2f}MB/s",
-            f"total_send={tot_send_bytes}B",
-            f"avg_send={avg_smb:.2f}MB/s",
-            '', ''
-        ])
 
 def run(rank, size, num_batches, batch_size):
     if torch.cuda.is_available():
