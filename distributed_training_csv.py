@@ -51,7 +51,6 @@ def log_row(path, row):
         csv.writer(f).writerow(row)
 
 def run_ps(rank, world_size, rounds, batch_size, device, backend):
-    # -- init group
     dist.init_process_group(backend=backend)
 
     # header
@@ -63,14 +62,14 @@ def run_ps(rank, world_size, rounds, batch_size, device, backend):
                 'bytes','throughput_MBps','loss'
             ])
 
-    # model + optimizer
+    # setup
     model      = Net().to(device)
     optimizer  = optim.SGD(model.parameters(), lr=0.01)
     shapes     = [p.data.shape for p in model.parameters()]
     flat_model = flatten_tensors([p.data for p in model.parameters()]).to(device)
     workers    = world_size - 1
 
-    # prepare data for workers
+    # data for workers
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
@@ -90,9 +89,9 @@ def run_ps(rank, world_size, rounds, batch_size, device, backend):
             for w in range(1, world_size):
                 dist.send(flat_model, dst=w)
             t1, ts1 = time.perf_counter(), datetime.datetime.now().isoformat()
-            sent_bytes = flat_model.numel()*flat_model.element_size()*workers
-            thr = (sent_bytes/(t1-t0))/(1024**2)
-            log_row(PS_RESULTS, [0, rnd, 'ps_send', ts0, ts1, f"{t1-t0:.6f}", sent_bytes, f"{thr:.2f}", ''])
+            sb = flat_model.numel()*flat_model.element_size()*workers
+            thr = (sb/(t1-t0))/(1024**2)
+            log_row(PS_RESULTS, [0, rnd, 'ps_send', ts0, ts1, f"{t1-t0:.6f}", sb, f"{thr:.2f}", ''])
 
             # workers → PS
             ts0, t2 = datetime.datetime.now().isoformat(), time.perf_counter()
@@ -102,9 +101,9 @@ def run_ps(rank, world_size, rounds, batch_size, device, backend):
                 dist.recv(buf, src=w)
                 agg += buf
             t3, ts1 = time.perf_counter(), datetime.datetime.now().isoformat()
-            recv_bytes = flat_model.numel()*flat_model.element_size()*workers
-            thr = (recv_bytes/(t3-t2))/(1024**2)
-            log_row(PS_RESULTS, [0, rnd, 'ps_recv', ts0, ts1, f"{t3-t2:.6f}", recv_bytes, f"{thr:.2f}", ''])
+            rb = flat_model.numel()*flat_model.element_size()*workers
+            thr = (rb/(t3-t2))/(1024**2)
+            log_row(PS_RESULTS, [0, rnd, 'ps_recv', ts0, ts1, f"{t3-t2:.6f}", rb, f"{thr:.2f}", ''])
 
             # update
             ts0, t4 = datetime.datetime.now().isoformat(), time.perf_counter()
@@ -126,7 +125,7 @@ def run_ps(rank, world_size, rounds, batch_size, device, backend):
             thr = (rb/(t1-t0))/(1024**2)
             log_row(PS_RESULTS, [rank, rnd, 'worker_recv', ts0, ts1, f"{t1-t0:.6f}", rb, f"{thr:.2f}", ''])
 
-            # load + train
+            # load & train
             new_w = unflatten_tensors(flat_model, shapes)
             for p, w in zip(model.parameters(), new_w):
                 p.data.copy_(w)
@@ -153,11 +152,11 @@ def run_ps(rank, world_size, rounds, batch_size, device, backend):
             thr = (sb/(t5-t4))/(1024**2)
             log_row(PS_RESULTS, [rank, rnd, 'worker_send', ts0, ts1, f"{t5-t4:.6f}", sb, f"{thr:.2f}", ''])
 
-    dist.barrier()
+    # clean up PS group
     dist.destroy_process_group()
 
 def run_ring(rank, world_size, rounds, batch_size, device, backend):
-    # re-init
+    # new group for ring
     dist.init_process_group(backend=backend)
 
     # header
@@ -169,13 +168,13 @@ def run_ring(rank, world_size, rounds, batch_size, device, backend):
                 'bytes','throughput_MBps','loss'
             ])
 
-    # same model setup
+    # same setup
     model      = Net().to(device)
     optimizer  = optim.SGD(model.parameters(), lr=0.01)
     shapes     = [p.data.shape for p in model.parameters()]
     flat_model = flatten_tensors([p.data for p in model.parameters()]).to(device)
 
-    # loader for *all* ranks
+    # all‐rank sampler
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
@@ -189,7 +188,7 @@ def run_ring(rank, world_size, rounds, batch_size, device, backend):
     dist.barrier()
 
     for rnd in range(rounds):
-        # broadcast
+        # broadcast params
         ts0, t0 = datetime.datetime.now().isoformat(), time.perf_counter()
         dist.broadcast(flat_model, src=0)
         t1, ts1 = time.perf_counter(), datetime.datetime.now().isoformat()
@@ -197,12 +196,10 @@ def run_ring(rank, world_size, rounds, batch_size, device, backend):
         thr = (bb/(t1-t0))/(1024**2)
         log_row(RING_RESULTS, [rank, rnd, 'ring_broadcast', ts0, ts1, f"{t1-t0:.6f}", bb, f"{thr:.2f}", ''])
 
-        # load
+        # load & train
         new_w = unflatten_tensors(flat_model, shapes)
         for p, w in zip(model.parameters(), new_w):
             p.data.copy_(w)
-
-        # train
         try:
             data, target = next(data_it)
         except StopIteration:
@@ -217,7 +214,7 @@ def run_ring(rank, world_size, rounds, batch_size, device, backend):
         t3, ts1 = time.perf_counter(), datetime.datetime.now().isoformat()
         log_row(RING_RESULTS, [rank, rnd, 'ring_train', ts0, ts1, f"{t3-t2:.6f}", '', '', f"{loss.item():.6f}"])
 
-        # all‑reduce
+        # ring all-reduce
         grad_flat = flatten_tensors([p.grad for p in model.parameters()]).to(device)
         ts0, t4 = datetime.datetime.now().isoformat(), time.perf_counter()
         dist.all_reduce(grad_flat, op=dist.ReduceOp.SUM)
@@ -234,17 +231,19 @@ def run_ring(rank, world_size, rounds, batch_size, device, backend):
         optimizer.step(); optimizer.zero_grad()
         flat_model = flatten_tensors([p.data for p in model.parameters()]).to(device)
 
-    dist.barrier()
+    # clean up ring group
     dist.destroy_process_group()
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("rounds",     type=int, help="global rounds")
-    p.add_argument("batch_size", type=int, help="mini‑batch size")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--epochs",     type=int, required=True,
+                        help="Number of global training rounds")
+    parser.add_argument("--batch_size", type=int, required=True,
+                        help="Mini‑batch size")
+    args = parser.parse_args()
 
-    world_size = int(os.environ.get('WORLD_SIZE', 1))
-    rank       = int(os.environ.get('RANK',       0))
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    rank       = int(os.environ.get("RANK",       0))
 
     # device / backend
     if torch.cuda.is_available():
@@ -253,12 +252,12 @@ def main():
         device = torch.device(f"cuda:{dev}")
     else:
         device = torch.device("cpu")
-    backend = 'nccl' if device.type=='cuda' else 'gloo'
+    backend = "nccl" if device.type=="cuda" else "gloo"
 
-    # 1) PS run → ps_results.csv
-    run_ps(rank, world_size, args.rounds, args.batch_size, device, backend)
-    # 2) Ring‑all‑reduce run → ring_results.csv
-    run_ring(rank, world_size, args.rounds, args.batch_size, device, backend)
+    # 1) ParamServer
+    run_ps(rank, world_size, args.epochs, args.batch_size, device, backend)
+    # 2) Ring all-reduce
+    run_ring(rank, world_size, args.epochs, args.batch_size, device, backend)
 
 if __name__ == "__main__":
     main()
