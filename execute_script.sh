@@ -48,14 +48,25 @@ COMMON_ARGS=(
   --master_port="$MASTER_PORT"
 )
 
+# Run PS mode
 echo "=== Running Parameter‐Server mode ==="
+t0=$(date +%s.%N)
 $TORCHRUN "${COMMON_ARGS[@]}" distributed_compare.py \
     ps \
     --epochs "$EPOCHS" \
     --batch_size "$BATCH_SIZE"
+t1=$(date +%s.%N)
+dur_ps=$(echo "$t1 - $t0" | bc)
+echo "Parameter‐Server run completed in ${dur_ps} seconds."
+echo
 
+# Run Ring mode
 echo "=== Running Ring All‑Reduce mode ==="
+t2=$(date +%s.%N)
 $TORCHRUN "${COMMON_ARGS[@]}" distributed_compare.py \
     ring \
     --epochs "$EPOCHS" \
     --batch_size "$BATCH_SIZE"
+t3=$(date +%s.%N)
+dur_ring=$(echo "$t3 - $t2" | bc)
+echo "Ring All‑Reduce run completed in ${dur_ring} seconds."
