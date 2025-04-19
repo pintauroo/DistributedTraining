@@ -236,7 +236,7 @@ def run_ring(rank, world_size, rounds, batch_size, device, backend):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs",     type=int, required=True,
+    parser.add_argument("--epochs",     type=int, required=False,
                         help="Number of global training rounds")
     parser.add_argument("--batch_size", type=int, required=True,
                         help="Mini‑batch size")
@@ -255,9 +255,9 @@ def main():
     backend = "nccl" if device.type=="cuda" else "gloo"
 
     # 1) ParamServer
-    run_ps(rank, world_size, args.epochs, args.batch_size, device, backend)
+    run_ps(rank, world_size, 1000, args.batch_size, device, backend)
     # 2) Ring all-reduce
-    run_ring(rank, world_size, args.epochs, args.batch_size, device, backend)
+    run_ring(rank, world_size, 1000, args.batch_size, device, backend)
 
 if __name__ == "__main__":
     main()
